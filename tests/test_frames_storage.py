@@ -149,3 +149,20 @@ def test_labels_events_alerts(tmp_path):
     assert list(eye["band"]) == ["green"] and eye["sensor_hue"].iloc[0] == 110.0
     tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "readings" not in tables  # raw data lives in VictoriaMetrics
+
+
+def test_backup_and_save_anchors(tmp_path):
+    from co2watch.calibration import extract_daily_anchors
+    con = db.connect(tmp_path / "l.sqlite")
+    anchors = extract_daily_anchors(prepare(simulate(days=3, seed=1).readings))
+    assert db.save_anchors(con, anchors) == len(anchors)
+    assert db.save_anchors(con, anchors) == len(anchors)  # upsert, no duplicates
+    assert con.execute("SELECT COUNT(*) FROM anchors").fetchone()[0] == len(anchors)
+    for _ in range(3):
+        db.backup(con, tmp_path / "bk", keep=2)
+        import time; time.sleep(1.1)
+    files = sorted((tmp_path / "bk").glob("*.sqlite"))
+    assert len(files) == 2
+    import sqlite3
+    assert sqlite3.connect(files[-1]).execute("SELECT COUNT(*) FROM anchors").fetchone()[0] \
+        == len(anchors)

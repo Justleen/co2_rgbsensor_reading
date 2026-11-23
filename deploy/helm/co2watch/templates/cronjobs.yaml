@@ -1,0 +1,41 @@
+{{- $root := . -}}
+{{- range $name, $job := .Values.jobs }}
+{{- if $job.enabled }}
+{{- $d := $root.Values.jobDefaults }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: co2watch-{{ $name }}
+  namespace: {{ include "co2watch.ns" $root }}
+  labels:
+    {{- include "co2watch.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  schedule: {{ $job.schedule | quote }}
+  timeZone: {{ $root.Values.timezone | quote }}
+  concurrencyPolicy: {{ $job.concurrencyPolicy | default $d.concurrencyPolicy }}
+  startingDeadlineSeconds: {{ $job.startingDeadlineSeconds | default $d.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ $d.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $d.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $job.backoffLimit | default $d.backoffLimit }}
+      activeDeadlineSeconds: {{ $job.activeDeadlineSeconds | default $d.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "co2watch.labels" $root | nindent 12 }}
+            app.kubernetes.io/component: {{ $name }}
+        spec:
+          restartPolicy: Never
+          {{- include "co2watch.podSpecCommon" $root | nindent 10 }}
+          containers:
+            - name: {{ $name }}
+              {{- include "co2watch.containerCommon" $root | nindent 14 }}
+              args:
+                {{- toYaml $job.args | nindent 16 }}
+              resources:
+                {{- toYaml ($job.resources | default $d.resources) | nindent 16 }}
+{{- end }}
+{{- end }}

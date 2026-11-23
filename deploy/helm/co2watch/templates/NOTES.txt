@@ -1,0 +1,12 @@
+co2watch installed in namespace {{ include "co2watch.ns" . }}.
+
+Database: /data/{{ .Values.storage.dbFile }} on PVC co2watch-data (kept on uninstall: {{ .Values.storage.keepOnUninstall }}).
+VictoriaMetrics: {{ .Values.vm.url }}
+
+Label a window (local time):
+  kubectl -n {{ include "co2watch.ns" . }} exec deploy/co2watch-toolbox -- co2watch label normal --db /data/{{ .Values.storage.dbFile }} --start "2026-11-24 14:00" --end "2026-11-24 16:00"
+Record a fluid change:
+  kubectl -n {{ include "co2watch.ns" . }} exec deploy/co2watch-toolbox -- co2watch mark-calibration --db /data/{{ .Values.storage.dbFile }} --kind fluid_change
+Run a job now:
+  kubectl -n {{ include "co2watch.ns" . }} create job --from=cronjob/co2watch-calibrate calibrate-manual
+Enabled jobs:{{ range $n, $j := .Values.jobs }}{{ if $j.enabled }} {{ $n }}{{ end }}{{ end }}

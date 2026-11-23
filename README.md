@@ -17,6 +17,9 @@ decisions, roadmap and open items.
 | Path | What |
 |---|---|
 | `docs/design.md` | decisions, architecture, `/metrics` contract, roadmap, open items |
+| `docs/deploy.md` | Helm install on k3s, labelling via the toolbox pod, backups, troubleshooting |
+| `deploy/helm/co2watch/` | Helm chart: namespace, SQLite PVC, toolbox pod, CronJobs |
+| `Dockerfile`, `.github/workflows/image.yml` | multi-arch image (amd64 + arm64) pushed to GHCR on a version tag |
 | `src/co2watch/vm.py` | read raw frames + context from VictoriaMetrics; CSV export; backfill import |
 | `src/co2watch/db.py` | SQLite: labels, calibration events, alert log, model registry |
 | `src/co2watch/features.py` | LED off/on frame subtraction, hue, ratios, UTC grid, rolling features, local time |

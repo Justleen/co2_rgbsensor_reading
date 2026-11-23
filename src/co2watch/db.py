@@ -82,9 +82,44 @@ def ms(ts) -> int:
 
 def connect(path: str | Path) -> sqlite3.Connection:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(path))
+    # Several pods on the same node may open the file (scorer, CronJobs,
+    # toolbox). SQLite's file locks serialise the writers; wait instead of
+    # failing when another one holds the lock. Never put this file on NFS/SMB.
+    con = sqlite3.connect(str(path), timeout=30.0)
+    con.execute("PRAGMA busy_timeout = 30000")
     con.executescript(SCHEMA)
     return con
+
+
+def save_anchors(con, anchors: pd.DataFrame) -> int:
+    """Upsert daily anchors (output of calibration.extract_daily_anchors)."""
+    def _ms_or_none(t):
+        return None if t is None or pd.isna(t) else ms(t)
+
+    rows = [(str(r.local_date), _f(r.night_hue), _ms_or_none(r.night_ts), int(r.night_n),
+             _f(r.plateau_hue), _ms_or_none(r.plateau_ts), int(r.plateau_n), _f(r.clear_night),
+             _f(r.coverage), int(bool(r.valid))) for r in anchors.itertuples(index=False)]
+    con.executemany("INSERT OR REPLACE INTO anchors VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+    con.commit()
+    return len(rows)
+
+
+def _f(x):
+    return None if x is None or pd.isna(x) else float(x)
+
+
+def backup(con, directory: str | Path, keep: int = 14) -> Path:
+    """Consistent online copy (SQLite backup API), keeping the newest ``keep``."""
+    d = Path(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    stamp = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%SZ")
+    dest = d / f"co2watch-{stamp}.sqlite"
+    with sqlite3.connect(str(dest)) as out:
+        con.backup(out)
+    old = sorted(d.glob("co2watch-*.sqlite"))[:-keep] if keep > 0 else []
+    for f in old:
+        f.unlink()
+    return dest
 
 
 def add_label(con, start, end, label: str, band: str | None = None, note: str | None = None,
