@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "co2watch"
+version = "0.1.0"
+description = "Self-learning anomaly detection for an aquarium CO2 drop checker colour sensor"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scikit-learn>=1.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+service = ["paho-mqtt>=2.0", "fastapi>=0.110", "uvicorn>=0.29"]
+notebook = ["jupyter", "matplotlib"]
+
+[project.scripts]
+co2watch = "co2watch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
