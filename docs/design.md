@@ -17,7 +17,7 @@ on, LEDs switched through a PCF8574).
 |---|---|
 | Detection | Classical ML only: hard-fault rules, a per-time-of-day robust baseline, then Isolation Forest. A forecaster is only tried if those miss cases. |
 | LLM | Not in the plan. Alerts carry templated reasons written by the detectors. |
-| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1, retention 5 years. |
+| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1. Target retention 5 years and image pinned to v1.156.0: edited in the k3s repo manifest, **not applied to the cluster yet**. |
 | Other storage | SQLite: labels, model registry, calibration events, alert log, cached daily anchors. |
 | Ingest | The D1 mini serves `/metrics`; VM scrapes it. No Home Assistant, no Influx, no push. The sensor and the aquarium controller share one D1. |
 | Notifications | None for now. Alerts are logged; labelling is done with the CLI or the notebook. |
@@ -54,20 +54,31 @@ flowchart LR
 ```
 
 * The D1 only reads and publishes. All logic runs in Python in a container.
+* **Ingest options considered.** *Scrape* (chosen): tiny firmware (a small web
+  server, no NTP, no TLS) and VM's own `up{job=...}` gives a free sensor-dropout
+  signal; the cost is that readings are lost while VM is down (the D1 holds only
+  the latest frame pair). *Push* (rejected): the D1 would POST to VM's
+  `/api/v1/import/prometheus`; it could buffer while offline, but needs NTP for
+  timestamps, an HTTP client and retry logic on an ESP8266 with little RAM. A
+  short ring buffer on the D1 can be added later if scrape gaps turn out to
+  matter.
+* Plain HTTP on the LAN. Scores and alerts are kept in SQLite; writing a
+  `co2_anomaly_score` series back to VM (so scores plot next to the raw data)
+  is optional and not implemented.
 * Scraping means the ML side can be down without losing data. If the D1 or Wi-Fi
   is down, the gap stays a gap.
 * Fully offline.
 
 ## 3. Roadmap
 
-This repo's steps, aligned with the M-numbering in your local `plan.md` as far
-as known (only M1 was in the summary; please correct the rest, or commit
-`plan.md` to this repo so there is one source).
+This table is the single source for milestones. The earlier local `plan.md`
+was merged into this document (2026-11-23) and retired; where they differed,
+this repo's version was kept.
 
 | Milestone | Contents | Where | Status |
 |---|---|---|---|
 | M0 | Design, simulator, self-calibration, VM/CSV access, label store | this repo | done (this PR + #1) |
-| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank | firmware / k3s repos | next |
+| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisites in the k3s repo: apply the VM manifest (5y retention, pinned image), set up a VM backup | firmware / k3s repos | next |
 | M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation notebook on simulated data | this repo | |
 | M3 | Isolation Forest on window features, compared against M2 on simulated and labelled events | this repo | |
 | M4 | Labelling CLI/notebook flow, weekly retraining, model registry and rollback, active-learning list | this repo | |
@@ -94,6 +105,84 @@ Firmware notes from the datasheet: I2C address 0x29 at 3.3 V; saturation at
 because the subtraction is then wrong); take the off frame and the on frame
 back to back so ambient changes little in between; wait one full integration
 time after switching the LEDs.
+
+Proposed additions from the datasheet review (not read by the code yet; add to
+`config.py` when the firmware exposes them):
+
+| Metric | Meaning |
+|---|---|
+| `tcs34725_saturated` | any channel at its max count for the current ATIME (masking already exists in `features.py`; this lets the firmware report it directly) |
+| `tcs34725_id_ok` | ID register 0x12 read back as 0x44 (a dead bus or wrong chip shows up here) |
+| `tcs34725_avalid` | STATUS bit AVALID was set when the frame was read (the reading is a fresh integration) |
+| `up{job="..."}` | VM's own scrape-success series, usable as the dropout signal |
+
+Extra hard-fault candidates from these: saturation, ID mismatch, repeated I2C
+errors, AVALID never set.
+
+### 4b. Sensor and board facts
+
+From the TAOS TCS3472 datasheet (`aquarium/docs/003341_TCS34725.pdf` in the
+aquarium repo; the bare chip, not the breakout board) and from the board in
+hand. Nothing here has been measured on the tank.
+
+**TCS34725**
+
+* I2C address 0x29, up to 400 kHz; supply 2.7-3.6 V and the I2C pins follow VDD
+  (absolute maximum 3.8 V), so keep the bus at 3.3 V. Operating -30..70 C.
+* Integration time = 2.4 ms x (256 - ATIME); max count = (256 - ATIME) x 1024,
+  capped at 65535. Examples: 0xFF = 2.4 ms / 1024, 0xF6 = 24 ms / 10240,
+  0xC0 = 154 ms / 65535. The saturation limit therefore depends on ATIME.
+* Gain 1x / 4x / 16x / 60x (CONTROL 0x0F). Gain and ATIME stay fixed once chosen;
+  a change starts a new calibration epoch.
+* Four 16-bit channels (R, G, B, clear) integrate simultaneously behind an
+  on-chip IR-blocking filter. Clear reads higher than any colour channel and
+  saturates first. A small response tail beyond 700 nm remains, so IR from
+  sunlight or some lamps leaks a little into every channel.
+* Read the eight bytes from 0x14 with the auto-increment command (0xB4), low
+  byte first; values are double-buffered. STATUS (0x13) AVALID marks a finished
+  integration. After PON there is a 2.4 ms warm-up.
+* Dark offset typically 0-5 counts: keep counts mid-range so quantisation does
+  not add noise to hue. Responsivity drifts about 250 ppm/C at visible
+  wavelengths (read off a log chart, approximate): negligible for tank
+  temperatures.
+* Responsivity falls off with angle from the optical axis (roughly cosine-shaped),
+  the physical basis for the "moved sensor / case slipped" anomalies.
+* Not in the datasheet, to be measured on the tank: PWM flicker from the tank
+  light, the optics of glass and drop checker, lux formulas. Working assumption
+  (untested): an integration time of about 100 ms or more averages typical PWM
+  flicker.
+* Choosing gain and ATIME (M1): with lights on and the window sunlight bump, the
+  clear channel should stay below about 70 % of its max count, while the lowest
+  daily counts stay well above the dark offset. Then freeze both and log them.
+
+**Illumination LEDs and the PCF8574**
+
+* The breakout has two white illumination LEDs and an `LED` pin. Polarity and
+  the floating default are board-specific and not in the chip datasheet: check
+  on the bench before wiring.
+* The aquarium plan (`aquarium/PLAN.md`) uses every D1 mini pin (D0 relay 4,
+  D1/D2 I2C, D3 button, D4 DS18B20, D5-D7 relays 1-3, D8 PWM, A0 button ladder),
+  so the `LED` pin is driven by a **PCF8574 I2C expansion breakout** on the shared
+  bus. An Arduino as I/O co-processor was considered and dropped.
+* Address: plain PCF8574(T) is 0x20-0x27; the "A" version is 0x38-0x3F, which can
+  collide with an SSD1306 OLED at 0x3C/0x3D. Set the jumpers so the address is
+  free (TCS34725 is 0x29; a DS3231/DS1307 RTC is 0x68).
+* Power it from 3.3 V (never run the bus at 5 V; see the sensor limit above).
+* Outputs sink up to about 25 mA but source only a few tens of microamps when
+  high (vendor note: loads of 10 uA or more need an external pull-up). The `LED`
+  pin is a logic input, so a weak high should do; verify on the real board.
+* After power-up all pins are high (to confirm in the PCF8574 datasheet), so the
+  LEDs may switch on briefly until the firmware sets the pin. Check that this is
+  acceptable, or invert the logic / add a pull resistor to force a safe default.
+* The module carries 1 kOhm I2C pull-ups (vendor: markings 102/1001). With the
+  RTC, OLED and TCS34725 breakouts also carrying their own, the parallel total
+  can drop below the roughly 333 Ohm the vendor warns about; add them up and
+  remove the pull-ups from all but one or two boards if needed.
+* The firmware must tolerate the expander being absent (count an I2C error, flag
+  the frames invalid). A longer I2C cable to the tank-side sensor needs care:
+  keep it short, mind the pull-ups, fall back to 100 kHz if unstable.
+* LEDs on only during readings also limits heat near the checker and LED ageing;
+  LED ageing is itself a slow-drift source to watch.
 
 ## 5. Storage
 
@@ -235,9 +324,8 @@ Nothing in this repo applies anything to the cluster.
 2. VM backup: Longhorn snapshot/backup, or `vmbackup` to the pi1 backup volume.
 3. DNS: `monitoring.fritz.box` did not resolve from the workstation on 11-21.
    Not investigated.
-4. PCF8574 module: check address and jumpers (the "A" version can clash with an
-   OLED at 0x3C/0x3D), power-up state of the outputs, and the combined I2C
-   pull-ups.
+4. PCF8574 module: check address and jumpers, power-up state of the outputs and
+   the combined I2C pull-ups (details in section 4b).
 5. Aquarium docs: add the expander and the TCS34725 header to
    `aquarium/PLAN.md` and the wiring docs.
 6. Still unanswered:
