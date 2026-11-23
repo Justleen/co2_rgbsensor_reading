@@ -61,11 +61,13 @@ pull secret in the namespace and set `imagePullSecrets`.
 ## 2. Install
 
 ```bash
-helm install co2watch deploy/helm/co2watch -n default \
-  --set vm.url=http://<vm-service>.<vm-namespace>.svc.cluster.local:8428
+helm install co2watch deploy/helm/co2watch -n default
 ```
 
-* `vm.url` is required; use the VM service name inside the cluster.
+* The defaults in `values.yaml` are set for the homelab cluster: VM at
+  `http://victoriametrics.monitoring.svc.cluster.local:8428`, everything pinned
+  to the node `lap1.fritz.box` (the hostname label includes the domain), volume
+  on `local-path`. Override with `--set vm.url=...` for another cluster.
 * The release record lives in `default`; the resources go to `co2watch`. Do not
   add `--create-namespace` (the chart creates the namespace itself). If you
   prefer `-n co2watch --create-namespace`, set `namespace.create=false`.
@@ -101,7 +103,7 @@ backup decision (Longhorn backup, or a copy to the pi1 backup volume); copying
 
 | Symptom | Likely cause |
 |---|---|
-| Pods `Pending`, "didn't match node selector" | node isn't called `lap1`: check `kubectl get nodes --show-labels` and set `nodeSelector` |
+| Pods `Pending`, "didn't match node selector" | the hostname label doesn't match `nodeSelector` (here it is `lap1.fritz.box`): check `kubectl get nodes --show-labels` |
 | Pods `Pending`, taint | lap1 as control plane may be tainted; add a matching `tolerations` entry |
 | `ImagePullBackOff` | image not built for this arch, or GHCR package private without a pull secret |
 | `unable to open database file` / permission denied | volume directory not writable by uid 10001; k3s local-path creates it world-writable, other provisioners may not (fix with an init step or a different storage class) |
