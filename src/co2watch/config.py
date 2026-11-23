@@ -15,6 +15,36 @@ TZ = ZoneInfo(TZ_NAME)
 
 SAMPLE_PERIOD_MIN = 5
 
+# ---------------------------------------------------------------------------
+# Sensor and /metrics contract (the D1 serves these; VictoriaMetrics scrapes)
+# ---------------------------------------------------------------------------
+CHANNELS = ("red", "green", "blue", "clear")
+LED_STATES = ("off", "on")  # two frames per reading, LEDs via PCF8574
+
+# Metric names are an ASSUMPTION until the M1 firmware exists. Change them here.
+METRIC_RAW = "tcs34725_raw"  # labels: channel=red|green|blue|clear, led=off|on
+METRIC_READ_TS = "tcs34725_reading_timestamp_seconds"  # when the frame pair was taken
+METRIC_READ_SEQ = "tcs34725_reading_seq"  # increments per reading (stuck firmware check)
+METRIC_ATIME = "tcs34725_atime"  # register value, must stay fixed
+METRIC_GAIN = "tcs34725_gain"  # 1, 4, 16 or 60, must stay fixed
+METRIC_I2C_ERRORS = "tcs34725_i2c_errors_total"
+# Controller states, if the controller reports them (open item).
+CONTEXT_METRICS = {
+    "light_on": "aquarium_light_on",
+    "co2_on": "aquarium_co2_on",
+    "airstone_on": "aquarium_airstone_on",
+    "temperature": "aquarium_temperature_celsius",
+    "ph": "aquarium_ph",
+}
+# Simulated or backfilled data is written with this label so it never mixes
+# with the scraped series. Real scraped series have no "source" label.
+SOURCE_LABEL = "source"
+
+
+def saturation_limit(atime: int) -> int:
+    """Max count per channel for an ATIME register value (datasheet)."""
+    return min((256 - atime) * 1024, 65535)
+
 # Drop checker reference fluid carbonate hardness (dKH). Leaflet column "KH4".
 REFERENCE_KH = 4.0
 
@@ -95,3 +125,6 @@ class TankSchedule:
     @property
     def co2_off(self) -> float:
         return self.lights_off - self.co2_stop_before_off_h
+
+
+BAND_NAMES = tuple(b.name for b in CHART_KH4)

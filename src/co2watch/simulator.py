@@ -6,7 +6,8 @@ real thing rather than like painted-on spikes:
     tank CO2 (mg/l)  --first-order lag 1-2 h-->  drop checker CO2
     drop checker CO2 --(KH4 formula)--> pH --(leaflet chart)--> chart hue
     chart hue --(hidden sensor transform + fluid ageing)--> sensor hue
-    sensor hue + illumination + stray light + noise --> red, green, blue, clear
+    sensor hue + LED + ambient light + noise --> two raw frames per reading
+        (LEDs off: red_off..clear_off, LEDs on: red_on..clear_on)
 
 The hidden sensor transform is deliberately different from the chart so the
 self-calibration has something real to recover. All schedule logic runs in
@@ -25,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from .config import CHART_KH4, REFERENCE_KH, TZ, TankSchedule
+from .features import FRAME_COLS
 
 # kind -> category used in labels / evaluation
 ANOMALY_CATEGORY = {
@@ -62,6 +64,8 @@ class SensorModel:
     tank_light_clear: float = 450.0  # extra counts while tank lights are on
     sun_clear: float = 350.0  # peak stray sunlight
     noise_frac: float = 0.006
+    flicker_frac: float = 0.02  # ambient change between the off and on frame
+    dark_clear: float = 15.0  # dark counts (sensor offset), cancels in on - off
 
 
 @dataclass
@@ -225,16 +229,25 @@ def simulate(
 
     rgb = np.array([colorsys.hsv_to_rgb((h % 360) / 360.0, s_, 1.0) for h, s_ in
                     zip(sensor_hue, sat)])
-    # white-ish ambient light: equal per channel (keeps hue, lowers saturation)
+    # Two frames per reading (LEDs switched through the PCF8574):
+    #   off frame = ambient only (tank light, sunlight, leaks)
+    #   on frame  = LED light through the checker + ambient
+    # Ambient is white-ish; it can differ slightly between the two frames
+    # (PWM flicker of the tank light), which the subtraction cannot remove.
+    tint = np.array([0.36, 0.34, 0.30])
     share = signal[:, None] * rgb / rgb.sum(axis=1, keepdims=True)
-    amb = ambient[:, None] * np.array([0.36, 0.34, 0.30])
-    counts = share + amb
-    clear = counts.sum(axis=1) * 1.05
-    allc = np.column_stack([counts, clear])
-    allc *= 1 + sensor.noise_frac * rng.standard_normal(allc.shape)
-    allc = np.round(np.clip(allc, 0, 65535))
+    amb_off = ambient[:, None] * tint
+    flicker = 1 + sensor.flicker_frac * rng.standard_normal(n) * (ambient > 0)
+    amb_on = amb_off * flicker[:, None]
 
-    df = pd.DataFrame(allc, index=idx, columns=["red", "green", "blue", "clear"])
+    def frame(counts):
+        c = np.column_stack([counts, counts.sum(axis=1) * 1.05 + sensor.dark_clear])
+        c = c + np.array([sensor.dark_clear * 0.3] * 3 + [0])  # dark counts
+        c *= 1 + sensor.noise_frac * rng.standard_normal(c.shape)
+        return np.round(np.clip(c, 0, 65535))
+
+    allc = np.column_stack([frame(amb_off), frame(share + amb_on)])
+    df = pd.DataFrame(allc, index=idx, columns=FRAME_COLS)
     df.index.name = "ts"
     df["light_on"] = lights
     df["co2_on"] = solenoid
@@ -248,14 +261,12 @@ def simulate(
         m = (df.index >= s) & (df.index < e)
         if a.kind == "stuck":
             first = df.index[m][0]
-            df.loc[m, ["red", "green", "blue", "clear"]] = df.loc[first, ["red", "green", "blue",
-                                                                          "clear"]].to_numpy()
+            df.loc[m, FRAME_COLS] = df.loc[first, FRAME_COLS].to_numpy()
         elif a.kind == "dropout":
             df = df.loc[~m]
         elif a.kind == "jump":
-            df.loc[m, ["red", "green", "blue", "clear"]] *= np.array([1.6, 0.7, 0.9, 1.3])
-            df.loc[m, ["red", "green", "blue", "clear"]] = df.loc[m, ["red", "green", "blue",
-                                                                      "clear"]].round()
+            df.loc[m, FRAME_COLS] = (df.loc[m, FRAME_COLS]
+                                     * np.tile([1.6, 0.7, 0.9, 1.3], 2)).round()
 
     truth = pd.DataFrame({
         "c_tank": c_tank, "c_checker": c_chk, "ph": ph, "chart_hue": chart_hue,

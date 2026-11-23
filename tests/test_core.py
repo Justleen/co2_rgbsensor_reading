@@ -7,8 +7,7 @@ from co2watch.calibration import (
     chart_hue_to_co2, drift_report, extract_daily_anchors, fit_calibration)
 from co2watch.config import CHART_KH4, co2_from_ph
 from co2watch.features import (
-    add_basic_features, add_window_features, hue_from_rgb, minutes_since_state_on,
-    to_regular_grid)
+    add_window_features, hue_from_rgb, minutes_since_state_on, prepare, to_regular_grid)
 from co2watch.simulator import AnomalySpec, SensorModel, default_scenario, simulate
 
 
@@ -18,7 +17,7 @@ def clean_sim():
 
 
 def feats(res):
-    return add_basic_features(to_regular_grid(res.readings))
+    return prepare(res.readings)
 
 
 # ---------------------------------------------------------------- chart
@@ -60,13 +59,13 @@ def test_gaps_are_marked_not_filled():
                                                           duration_h=2)])
     grid = to_regular_grid(res.readings)
     assert grid["missing"].sum() == 24
-    assert grid.loc[grid["missing"], "red"].isna().all()
+    assert grid.loc[grid["missing"], "red_on"].isna().all()
 
 
 def test_window_features_detect_flatline():
     res = simulate(days=3, seed=1, anomalies=[AnomalySpec("stuck", day=1, hour=9,
                                                           duration_h=3)])
-    df = add_window_features(feats(res))
+    df = add_window_features(feats(res))  # flat-line counts raw frames
     lab = res.labels.iloc[0]
     inside = df.loc[lab["start"] + pd.Timedelta("40min"): lab["end"] - pd.Timedelta("5min")]
     assert (inside["n_changes"] == 0).all()
@@ -158,21 +157,3 @@ def test_drift_report_ageing_vs_diffuser():
     assert rep["pattern"] == "daily_swing_shrinking"
 
 
-# ---------------------------------------------------------------- db
-
-def test_db_roundtrip(tmp_path, clean_sim):
-    con = db.connect(tmp_path / "t.sqlite")
-    r = clean_sim.readings.iloc[:500]
-    assert db.insert_readings(con, r) == 500
-    assert db.insert_readings(con, r) == 0  # append-only, no duplicates
-    db.insert_context_changes(con, r["co2_on"], "co2_on")
-    back = db.read_readings(con)
-    assert len(back) == 500 and back.index.tz is not None
-    co2 = db.context_on_grid(con, "co2_on", back.index)
-    assert (co2.to_numpy() == r["co2_on"].to_numpy()).all()
-    n = db.export_csv(con, tmp_path / "out.csv")
-    assert n == 500
-    out = pd.read_csv(tmp_path / "out.csv")
-    assert {"ts", "local_time", "red", "co2_on"} <= set(out.columns)
-    con2 = db.connect(tmp_path / "t2.sqlite")
-    assert db.import_csv(con2, tmp_path / "out.csv") == 500

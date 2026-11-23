@@ -267,7 +267,7 @@ def drift_report(anchors: pd.DataFrame, days: int = 14,
     Fluid ageing moves the whole scale, so night and plateau drift together.
     An injection problem (diffuser, bubble counter, regulator) moves mainly the
     daytime plateau toward the night level. This is a *description* for the
-    detectors and the LLM, not a verdict.
+    detectors and their templated alert reasons, not a verdict.
     """
     a = anchors[anchors["valid"]].copy()
     if calibration_events:
