@@ -44,6 +44,34 @@ def saturation_from_rgb(r, g, b) -> np.ndarray:
     return s
 
 
+FRAME_COLS = [f"{c}_{led}" for led in ("off", "on") for c in ("red", "green", "blue", "clear")]
+
+
+def combine_frames(df: pd.DataFrame, saturation: float | None = None) -> pd.DataFrame:
+    """Turn the two raw frames per reading into the signal used downstream.
+
+    Input columns ``red_off .. clear_off`` (LEDs off: ambient only) and
+    ``red_on .. clear_on`` (LEDs on: ambient + LED light through the checker).
+
+    Output adds ``red, green, blue, clear`` = on - off (ambient subtracted,
+    clipped at 0), ``ambient_clear`` = clear_off and ``saturated`` = any on-frame
+    channel at the sensor limit. A saturated reading is not usable because the
+    subtraction is then wrong.
+    """
+    out = df.copy()
+    for c in ("red", "green", "blue", "clear"):
+        out[c] = (out[f"{c}_on"] - out[f"{c}_off"]).clip(lower=0)
+    out["ambient_clear"] = out["clear_off"]
+    out["ambient_frac"] = out["clear_off"] / out["clear_on"].replace(0, np.nan)
+    if saturation is not None:
+        on = out[[f"{c}_on" for c in ("red", "green", "blue", "clear")]]
+        out["saturated"] = (on >= saturation).any(axis=1)
+        out.loc[out["saturated"], ["red", "green", "blue", "clear"]] = np.nan
+    else:
+        out["saturated"] = False
+    return out
+
+
 def to_regular_grid(df: pd.DataFrame, period_min: int = SAMPLE_PERIOD_MIN) -> pd.DataFrame:
     """Put readings on a regular UTC grid. Missing slots become NaN rows with
     ``missing=True``; they are never interpolated here (gaps are information).
@@ -59,7 +87,8 @@ def to_regular_grid(df: pd.DataFrame, period_min: int = SAMPLE_PERIOD_MIN) -> pd
     df = df[~df.index.duplicated(keep="last")]
     rule = f"{period_min}min"
     grid = df.resample(rule).last()
-    grid["missing"] = grid[["red", "green", "blue", "clear"]].isna().any(axis=1)
+    cols = [c for c in FRAME_COLS if c in grid.columns] or ["red", "green", "blue", "clear"]
+    grid["missing"] = grid[cols].isna().any(axis=1)
     grid.index.name = "ts"
     return grid
 
@@ -93,8 +122,13 @@ def add_window_features(df: pd.DataFrame, window_min: int = 30) -> pd.DataFrame:
     out["clear_med"] = out["clear"].rolling(w, min_periods=2).median()
     clear_ref = out["clear"].rolling("7D", min_periods=12).median()
     out["clear_rel"] = out["clear_med"] / clear_ref
+    if "ambient_clear" in out:
+        # light leak / moved sensor: ambient (LEDs-off) level vs the same hour
+        # over the last week is done by the baseline; here just the window level
+        out["ambient_med"] = out["ambient_clear"].rolling(w, min_periods=2).median()
     # flat-line indicator: all raw channels unchanged over the window
-    raw = out[["red", "green", "blue", "clear"]]
+    raw_cols = [c for c in FRAME_COLS if c in out.columns] or ["red", "green", "blue", "clear"]
+    raw = out[raw_cols]
     changed = raw.diff().abs().sum(axis=1) > 0
     out["n_changes"] = changed.astype(float).rolling(w, min_periods=1).sum()
     return out
@@ -115,3 +149,9 @@ def minutes_since_state_on(index: pd.DatetimeIndex, states: pd.Series | None) ->
     ).ffill().reindex(index)
     mins = (index.to_series() - last_on).dt.total_seconds() / 60.0
     return mins.where(aligned.fillna(False).astype(bool))
+
+
+def prepare(df: pd.DataFrame, saturation: float | None = None) -> pd.DataFrame:
+    """Raw two-frame readings (+ optional context columns) -> regular grid with
+    ambient-subtracted channels and per-reading features."""
+    return add_basic_features(combine_frames(to_regular_grid(df), saturation))
