@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: co2watch-env
+  namespace: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+data:
+  VM_URL: {{ include "co2watch.vmurl" . | quote }}
+  VM_SOURCE: {{ .Values.vm.source | quote }}
+  DB: {{ printf "/data/%s" .Values.storage.dbFile | quote }}
+  BACKUP_DIR: {{ printf "/data/%s" .Values.storage.backupDir | quote }}
+  TZ: {{ .Values.timezone | quote }}
+  HOME: /tmp

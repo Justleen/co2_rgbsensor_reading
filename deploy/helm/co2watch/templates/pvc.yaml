@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: co2watch-data
+  namespace: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+  {{- if .Values.storage.keepOnUninstall }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes: ["ReadWriteOnce"]   # never ReadWriteMany: SQLite needs local file locks
+  {{- with .Values.storage.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}

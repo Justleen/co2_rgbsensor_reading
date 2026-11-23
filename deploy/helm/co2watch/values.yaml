@@ -1,0 +1,109 @@
+# co2watch Helm values. Nothing here touches VictoriaMetrics; the jobs only read from it.
+
+namespace:
+  # The chart creates and owns this namespace. Install with
+  #   helm install co2watch deploy/helm/co2watch -n default --set vm.url=...
+  # (do NOT add --create-namespace while create is true).
+  # Set create: false to use `-n co2watch --create-namespace` instead.
+  create: true
+  name: co2watch
+  # Pod Security Standard enforced on the namespace; all pods here comply.
+  podSecurity: restricted
+
+image:
+  repository: ghcr.io/justleen/co2watch
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []  # needed while the GHCR package is private
+
+# VictoriaMetrics base URL as seen from inside the cluster (required), e.g.
+#   http://victoria-metrics.monitoring.svc.cluster.local:8428
+vm:
+  url: ""
+  # VM "source" label to read. Empty = scraped data. "sim" = simulated data.
+  source: ""
+
+timezone: Europe/Amsterdam
+
+# --- SQLite -----------------------------------------------------------------
+# One file on one ReadWriteOnce volume. SQLite needs a real local filesystem:
+# never NFS/SMB or a ReadWriteMany volume (e.g. Longhorn RWX is NFS).
+# All pods are pinned to the same node so they can share the RWO volume;
+# SQLite's own locking then keeps one writer at a time, and every CronJob
+# uses concurrencyPolicy: Forbid.
+storage:
+  storageClassName: local-path   # k3s default; "longhorn" (RWO) also works
+  size: 1Gi
+  dbFile: co2watch.sqlite
+  backupDir: backups
+  keepOnUninstall: true          # helm uninstall leaves the PVC (and your labels) alone
+
+# Pin everything next to VictoriaMetrics on lap1. local-path volumes are bound
+# to one node anyway, so this must match where the PVC lives.
+nodeSelector:
+  kubernetes.io/hostname: lap1
+tolerations: []    # lap1 is the control plane; add a toleration here if it is tainted
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# --- Toolbox ------------------------------------------------------------------
+# A long-running pod that holds the database volume, for labelling and
+# inspection:
+#   kubectl -n co2watch exec deploy/co2watch-toolbox -- co2watch label normal --db /data/co2watch.sqlite --start ... --end ...
+#   kubectl -n co2watch exec -it deploy/co2watch-toolbox -- sqlite3 /data/co2watch.sqlite
+toolbox:
+  enabled: true
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 256Mi}
+
+# --- Scheduled jobs -------------------------------------------------------------
+# Each entry becomes a CronJob. Schedules are in `timezone`.
+# $(VM_URL), $(VM_SOURCE) and $(DB) are filled in from the pod environment.
+jobDefaults:
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 1
+  activeDeadlineSeconds: 1800
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 768Mi}
+
+jobs:
+  # Daily self-calibration after the overnight low has been reached.
+  calibrate:
+    enabled: true
+    schedule: "30 10 * * *"
+    args: ["calibrate", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)", "--db", "$(DB)", "--days", "21", "--save"]
+  # Nightly consistent copy of the SQLite file on the same volume (keep 14).
+  # This is NOT off-node protection; see docs/deploy.md.
+  backup:
+    enabled: true
+    schedule: "45 3 * * *"
+    args: ["backup", "--db", "$(DB)", "--dir", "$(BACKUP_DIR)", "--keep", "14"]
+  # M2: score the latest readings every 5 minutes and log alerts.
+  # Off until the `score` command exists.
+  score:
+    enabled: false
+    schedule: "*/5 * * * *"
+    activeDeadlineSeconds: 240
+    args: ["score", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)", "--db", "$(DB)"]
+  # M3/M4: weekly retraining (and on demand: kubectl create job --from=cronjob/co2watch-train).
+  # Off until the `train` command exists.
+  train:
+    enabled: false
+    schedule: "0 4 * * 1"
+    args: ["train", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)", "--db", "$(DB)"]

@@ -1,0 +1,13 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: {{ .Values.namespace.podSecurity }}
+    pod-security.kubernetes.io/warn: {{ .Values.namespace.podSecurity }}
+  annotations:
+    # Deleting the namespace would delete the PVC and all labels with it.
+    helm.sh/resource-policy: keep
+{{- end }}

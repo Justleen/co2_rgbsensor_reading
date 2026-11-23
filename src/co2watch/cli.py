@@ -11,6 +11,8 @@ Commands
   calibrate         daily anchors, self-calibration fit and drift report
   label             store a label for a time window (normal, real_problem, ...)
   mark-calibration  record a fluid change / sensor move
+  init-db           create the SQLite schema
+  backup            consistent copy of the SQLite file, keeping the newest N
 """
 
 from __future__ import annotations
@@ -86,6 +88,8 @@ def _cmd_calibrate(a):
     fit = fit_calibration(anchors, eye, calibration_events=events)
     drift = drift_report(anchors, calibration_events=events)
     valid = anchors[anchors["valid"]]
+    if con is not None and a.save:
+        print(f"saved {db.save_anchors(con, anchors)} daily anchors to {a.db}")
     print(anchors.tail(a.show).to_string(index=False))
     print(json.dumps({"fit": fit.to_dict(), "drift": drift}, indent=2, default=str))
     if len(valid):
@@ -97,6 +101,16 @@ def _cmd_label(a):
     con = db.connect(a.db)
     i = db.add_label(con, _local(a.start), _local(a.end), a.label, band=a.band, note=a.note)
     print(f"label #{i} stored")
+
+
+def _cmd_backup(a):
+    con = db.connect(a.db)
+    print(f"backup written to {db.backup(con, a.dir, a.keep)}")
+
+
+def _cmd_init(a):
+    db.connect(a.db).close()
+    print(f"database ready at {a.db}")
 
 
 def _cmd_mark(a):
@@ -144,7 +158,15 @@ def main(argv=None):
 
     s = sub.add_parser("calibrate"); _source_args(s)
     s.add_argument("--show", type=int, default=7)
+    s.add_argument("--save", action="store_true", help="store daily anchors in --db")
     s.set_defaults(func=_cmd_calibrate)
+
+    s = sub.add_parser("init-db"); s.add_argument("--db", required=True)
+    s.set_defaults(func=_cmd_init)
+
+    s = sub.add_parser("backup"); s.add_argument("--db", required=True)
+    s.add_argument("--dir", required=True); s.add_argument("--keep", type=int, default=14)
+    s.set_defaults(func=_cmd_backup)
 
     s = sub.add_parser("label"); s.add_argument("--db", required=True)
     s.add_argument("label", choices=db.LABELS)

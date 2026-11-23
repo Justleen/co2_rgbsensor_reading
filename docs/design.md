@@ -71,7 +71,7 @@ as known (only M1 was in the summary; please correct the rest, or commit
 | M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation notebook on simulated data | this repo | |
 | M3 | Isolation Forest on window features, compared against M2 on simulated and labelled events | this repo | |
 | M4 | Labelling CLI/notebook flow, weekly retraining, model registry and rollback, active-learning list | this repo | |
-| M5 | Container + k3s manifests for scorer (Deployment) and trainer (CronJob) | this repo | |
+| M5 | Container image + Helm chart: namespace, SQLite PVC, toolbox, CronJobs (see `docs/deploy.md`) | this repo | chart written; score/train jobs switched off until M2-M4 |
 | M6 | Evaluate on 2+ weeks of real data, tune thresholds; decide on notifications | this repo | |
 
 ## 4. The `/metrics` contract (needed for M1)

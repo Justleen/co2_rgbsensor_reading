@@ -1,0 +1,37 @@
+{{- if .Values.toolbox.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: co2watch-toolbox
+  namespace: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: toolbox
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # never two pods on the volume during a rollout
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: co2watch
+      app.kubernetes.io/component: toolbox
+  template:
+    metadata:
+      labels:
+        {{- include "co2watch.labels" . | nindent 8 }}
+        app.kubernetes.io/component: toolbox
+      annotations:
+        checksum/env: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "co2watch.podSpecCommon" . | nindent 6 }}
+      initContainers:
+        - name: init-db
+          {{- include "co2watch.containerCommon" . | nindent 10 }}
+          args: ["init-db", "--db", "$(DB)"]
+      containers:
+        - name: toolbox
+          {{- include "co2watch.containerCommon" . | nindent 10 }}
+          command: ["sleep", "infinity"]
+          resources:
+            {{- toYaml .Values.toolbox.resources | nindent 12 }}
+{{- end }}
