@@ -13,7 +13,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 
 {{- define "co2watch.vmurl" -}}
-{{ required "vm.url is required, e.g. --set vm.url=http://victoria-metrics.monitoring.svc.cluster.local:8428" .Values.vm.url }}
+{{ required "vm.url is required, e.g. --set vm.url=http://victoriametrics.monitoring.svc.cluster.local:8428" .Values.vm.url }}
 {{- end -}}
 
 {{/* Pod-level settings shared by the toolbox and every job. */}}

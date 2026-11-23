@@ -16,10 +16,11 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []  # needed while the GHCR package is private
 
-# VictoriaMetrics base URL as seen from inside the cluster (required), e.g.
-#   http://victoria-metrics.monitoring.svc.cluster.local:8428
+# VictoriaMetrics base URL as seen from inside the cluster. Default matches the
+# homelab k3s cluster (Service `victoriametrics`, namespace `monitoring`, port 8428;
+# manifests/infrastructure/monitoring/victoria-metrics.yaml in the k3s repo).
 vm:
-  url: ""
+  url: http://victoriametrics.monitoring.svc.cluster.local:8428
   # VM "source" label to read. Empty = scraped data. "sim" = simulated data.
   source: ""
 
@@ -39,10 +40,11 @@ storage:
   keepOnUninstall: true          # helm uninstall leaves the PVC (and your labels) alone
 
 # Pin everything next to VictoriaMetrics on lap1. local-path volumes are bound
-# to one node anyway, so this must match where the PVC lives.
+# to one node anyway, so this must match where the PVC lives. On this cluster the
+# node (and its hostname label) is `lap1.fritz.box`, not `lap1`.
 nodeSelector:
-  kubernetes.io/hostname: lap1
-tolerations: []    # lap1 is the control plane; add a toleration here if it is tainted
+  kubernetes.io/hostname: lap1.fritz.box
+tolerations: []    # lap1 is the control plane but carries no NoSchedule taint (checked 2026-11-23); add one here if that changes
 
 podSecurityContext:
   runAsNonRoot: true
