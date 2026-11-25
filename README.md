@@ -12,10 +12,17 @@ it never controls equipment.
 been tested on real tank data yet. See [docs/design.md](docs/design.md) for the
 decisions, roadmap and open items.
 
+## The D1 web page
+
+The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-checker colour, the light dimmer and the light schedule:
+
+<img src="docs/img/web-ui.png" alt="co2watch web page: drop-checker colour swatch, dimmer, light schedule curve and table" width="320">
+
 ## What's here
 
 | Path | What |
 |---|---|
+| `firmware/` | D1 mini sketch: two-frame sensor readings, `/metrics`, light dimmer and schedule, web page, OTA, local page emulator (see `firmware/README.md`) |
 | `docs/design.md` | decisions, architecture, `/metrics` contract, roadmap, open items |
 | `docs/deploy.md` | Helm install on k3s, labelling via the toolbox pod, backups, troubleshooting |
 | `deploy/helm/co2watch/` | Helm chart: namespace, SQLite PVC, toolbox pod, CronJobs |
