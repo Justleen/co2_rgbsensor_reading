@@ -68,6 +68,7 @@ class Board:
         self.dim_changes = 0
         self.sched = [p[:] for p in SCHED_DEFAULT]
         self.sched_en = False
+        self.maxh = 7.0   # preview: max hours at 100 % (page enforces it)
         self.override_until = None
         self.source = "manual"
         self.posts = 0
@@ -250,10 +251,11 @@ class Board:
             "time_valid": valid, "time": t.strftime("%H:%M:%S") if valid else "",
             "minute": round(self.minute(), 2) if valid else 0,
             "relays": dict(self.relays), "relay_src": dict(self.relay_src),
+            "preview": True,  # enables preview-only page features (relays, drag-to-edit)
         }
 
     def schedule(self):
-        return {"en": self.sched_en, "pts": self.sched}
+        return {"en": self.sched_en, "pts": self.sched, "maxh": self.maxh}
 
     def metrics(self):
         self.tick()
@@ -403,6 +405,12 @@ def make_handler(board):
                 if "resume" in q:
                     board.override_until = None
                     board.relay_override.clear()
+                if "maxh" in q:
+                    try:
+                        board.maxh = min(16.0, max(0.5, float(q["maxh"])))
+                    except ValueError:
+                        self.send(400, "maxh must be a number of hours\n", "text/plain")
+                        return
                 board.tick()
                 self.j(board.schedule())
             else:

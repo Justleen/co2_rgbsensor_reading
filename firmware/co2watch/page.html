@@ -57,6 +57,9 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div class="row"><label><input type="checkbox" id="en" onchange="sch('en='+(this.checked?1:0))"> Schedule on</label>
 <span class="mut" id="clk"></span></div>
 <canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
+<div id="dragHint" style="display:none"><div class="row" style="margin-top:6px"><label>Hours at 100 %
+<input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label></div>
+<small class="mut">Preview: full light (100 %) lasts exactly this many hours. Drag the thick 100 % bar to move the whole day; drag the other points to shape the ramps (time snaps to 5 min). After the bar the light fades to the next point, and from there it stays at 40 % or lower (shaded). Only switching on from 0 % or off to 0 % can be instant (step); everything else fades. Press Save schedule to keep it.</small></div>
 <table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
 <div class="row" style="margin-top:10px"><button onclick="saveSch()">Save schedule</button>
 <button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div>
@@ -84,7 +87,49 @@ const inWin=(m,a,b)=>a<=b?(m>=a&&m<b):(m>=a||m<b);
 function rules(p){const L=[];for(let m=0;m<1440;m++)L.push(lvAt(p,m));const mx=Math.max(...L),pk=L.findIndex(v=>v>=mx-1e-6);
  let off=-1;for(let k=pk;k<pk+1440;k++)if(L[k%1440]<60){off=k%1440;break}
  return{co2on:(pk-120+1440)%1440,co2off:off,co2:m=>off<0||inWin(m,(pk-120+1440)%1440,off),air:m=>L[Math.floor(m)%1440]<40}}
-let hasRelays=0;
+let hasRelays=0,dragOn=0;
+// --- Drag-to-edit (preview, emulator only) ---------------------------------
+// Time snaps to 5 min, level to 1 %. Points stay in time order. The 100 % plateau
+// (first point at 100 % and the next one) is a bar of exactly maxh hours: drag it
+// anywhere along its length to move the whole day (all points keep their relative
+// times). Other points drag one by one; before the bar they are capped at 99 %,
+// after it at 40 %.
+const AFTER_CAP=40;
+const maxMin=()=>Math.round(Math.max(0.5,Math.min(16,+$('maxh').value||7))*60);
+function constrain(p){const pl=plateauIdx(p),mx=maxMin();let changed=false;
+ if(pl<0)return false;
+ const d=p[pl][0]+mx-p[pl+1][0];               // fixed length: resize, evening keeps its fade durations
+ if(d){for(let k=pl+1;k<8;k++)p[k][0]+=d;changed=true}
+ const over=p[7][0]-1435;if(over>0){for(const q of p)q[0]-=over}  // keep the day inside 00:00-23:55
+ const under=-p[0][0];if(under>0){for(const q of p)q[0]+=under}
+ p.forEach((q,k)=>{const cap=k<pl?99:k>pl+1?AFTER_CAP:100;if(q[1]>cap){q[1]=cap;changed=true}});if(fixSteps(p))changed=true;return changed}
+function writeTb(p){p.forEach((q,k)=>{$('t'+k).value=hm(q[0]);$('l'+k).value=q[1]});fixSteps(p)}
+// Only switching on from 0 % or off to 0 % may be instant (step); every other change fades.
+function fixSteps(p){let ch=false;p.forEach((q,k)=>{const n=p[(k+1)%8],ok=q[1]==0||n[1]==0,sel=$('r'+k);
+  if(q[2]==2&&!ok){q[2]=0;ch=true}if(sel){sel.options[2].disabled=!ok;sel.value=q[2]}});return ch}
+function plateauIdx(p){for(let k=0;k<7;k++)if(p[k][1]>=100&&p[k+1][1]>=100)return k;return -1}
+function initDrag(){dragOn=1;const c=$('cv');c.style.touchAction='none';$('dragHint').style.display='';let drag=-1;
+ if(S&&S.maxh)$('maxh').value=S.maxh;
+ try{if(S)fixSteps(readTb())}catch(e){}
+ $('maxh').oninput=()=>{let p;try{p=readTb()}catch(e){return}constrain(p);writeTb(p);schDirty=1;draw()};
+ const geo=()=>{const w=c.clientWidth,h=150,r=c.getBoundingClientRect();return{r,X:m=>m/1440*(w-30)+25,Y:v=>h-18-v/100*(h-28),
+  iX:x=>(x-25)/(w-30)*1440,iY:y=>(h-18-y)/(h-28)*100}};
+ const pts=()=>{try{return readTb()}catch(e){return S.pts.map(q=>q.slice())}};
+ let grab=0,orig=null;
+ const hit=e=>{const g=geo(),x=e.clientX-g.r.left,y=e.clientY-g.r.top,p=pts(),pl=plateauIdx(p);
+  if(pl>=0&&Math.abs(y-g.Y(100))<10&&x>=g.X(p[pl][0])-10&&x<=g.X(p[pl+1][0])+10)return 'bar';
+  let best=-1,bd=14;p.forEach((q,k)=>{if(pl>=0&&(k==pl||k==pl+1))return;const d=Math.hypot(g.X(q[0])-x,g.Y(q[1])-y);if(d<bd){bd=d;best=k}});return best};
+ c.addEventListener('pointerdown',e=>{drag=hit(e);if(drag==='bar'){const g=geo();grab=g.iX(e.clientX-g.r.left);orig=pts()}
+  if(drag==='bar'||drag>=0){c.setPointerCapture(e.pointerId);e.preventDefault()}else drag=-1});
+ c.addEventListener('pointermove',e=>{if(drag===-1){const h=hit(e);c.style.cursor=h==='bar'?'ew-resize':h>=0?'grab':'';return}c.style.cursor=drag==='bar'?'ew-resize':'grabbing';
+  if(drag==='bar'){const g=geo();let d=Math.round((g.iX(e.clientX-g.r.left)-grab)/5)*5;
+   d=Math.max(-orig[0][0],Math.min(1435-orig[7][0],d));const p=orig.map(q=>[q[0]+d,q[1],q[2]]);writeTb(p);schDirty=1;draw();return}
+  const g=geo(),p=pts(),pl=plateauIdx(p),snap=v=>Math.round(v/5)*5;
+  let m=snap(g.iX(e.clientX-g.r.left)),v=Math.round(g.iY(e.clientY-g.r.top));
+  const lo=k=>k>0?p[k-1][0]+5:0,hi=k=>k<7?p[k+1][0]-5:1435;
+  {m=Math.max(lo(drag),Math.min(hi(drag),m));const cap=pl<0?100:drag<pl?99:AFTER_CAP;v=Math.max(0,Math.min(cap,v));p[drag]=[m,v,p[drag][2]]}
+  writeTb(p);schDirty=1;draw()});
+ const end=()=>{drag=-1;c.style.cursor=''};c.addEventListener('pointerup',end);c.addEventListener('pointercancel',end)}
 function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.getContext('2d');c.width=w;c.height=H;
  let p=S.pts;if(schDirty)try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){}
  const cs=getComputedStyle(document.body),fg=cs.color,X=m=>m/1440*(w-30)+25,Y=v=>h-18-v/100*(h-28);
@@ -93,6 +138,11 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.ge
  for(const v of[0,50,100]){x.fillText(v,0,Y(v)+3)}
  x.strokeStyle='#e0a020';x.lineWidth=2;x.beginPath();for(let m=0;m<=1440;m+=5){const v=lvAt(p,m%1440);m?x.lineTo(X(m),Y(v)):x.moveTo(X(m),Y(v))}x.stroke();
  x.fillStyle='#e0a020';for(const q of p){x.beginPath();x.arc(X(q[0]),Y(q[1]),3,0,7);x.fill()}
+ if(dragOn){const pl=plateauIdx(p);if(pl>=0){const xa=X(p[pl][0]),xb=X(p[pl+1][0]);x.strokeStyle='#e0a020';x.lineWidth=8;x.lineCap='round';
+  x.beginPath();x.moveTo(xa,Y(100));x.lineTo(xb,Y(100));x.stroke();x.lineWidth=1;x.lineCap='butt';x.fillStyle='#000';x.font='bold 10px system-ui';
+  x.fillText('⟷ '+(maxMin()/60)+' h',(xa+xb)/2-16,Y(100)+3.5);x.font='10px system-ui'}}
+ if(dragOn){const pl=plateauIdx(p);if(pl>=0&&pl+2<8){const xe=X(p[pl+2][0]);x.fillStyle='rgba(200,60,60,.12)';x.fillRect(xe,Y(100),X(1440)-xe,Y(AFTER_CAP)-Y(100));
+  x.strokeStyle='rgba(200,60,60,.6)';x.setLineDash([4,3]);x.beginPath();x.moveTo(xe,Y(AFTER_CAP));x.lineTo(X(1440),Y(AFTER_CAP));x.stroke();x.setLineDash([])}}
  if(hasRelays){const R=rules(p),lanes=[['CO2','#2e8b57',m=>R.co2(m)&&!R.air(m),158],['Air','#3b7dd8',R.air,176]];
   for(const[nm,col,f,y]of lanes){x.fillStyle='rgba(128,128,128,.15)';x.fillRect(X(0),y,X(1440)-X(0),12);x.fillStyle=col;
    let st=null;for(let m=0;m<=1440;m++){const on=m<1440&&f(m);if(on&&st==null)st=m;if(!on&&st!=null){x.fillRect(X(st),y,X(m)-X(st),12);st=null}}
@@ -101,11 +151,12 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.ge
  if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(0));x.lineTo(X(nowMin),hasRelays?188:Y(0));x.stroke()}}
 function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
  S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
- tb.oninput=tb.onchange=()=>{schDirty=1;draw()};$('en').checked=S.en;schDirty=0;draw()}
+ tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)try{fixSteps(readTb())}catch(e){}draw()};$('en').checked=S.en;if(S.maxh)$('maxh').value=S.maxh;if(dragOn)try{fixSteps(readTb())}catch(e){}schDirty=0;draw()}
 async function loadSch(){S=await (await fetch('/api/schedule')).json();fillTb()}
 async function sch(a){busy=1;const b=btnStart();let ok=false;try{const r=await fetch('/api/schedule?'+a,{method:'POST'});if(!r.ok)bad(await r.text());else{S=await r.json();fillTb();ok=true}}catch(e){bad('No answer from the board')}finally{busy=0;btnEnd(b);if(ok)done(b);load()}}
-function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){bad(e);return}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){bad('Two points have the same time');return}
- sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';')))}
+function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){bad(e);return}
+ let extra='';if(dragOn){if(constrain(p)){writeTb(p);draw()}extra='&maxh='+(maxMin()/60)}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){bad('Two points have the same time');return}
+ sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';'))+extra)}
 const RL={co2:'CO2',air:'Air',heat:'Heat',pump:'Pump'},rlBusy={};
 function showRelays(r,src){const sec=$('relays');if(!r){sec.style.display='none';hasRelays=0;return}sec.style.display='';hasRelays=1;src=src||{};const box=$('rl');
  for(const k in RL){if(!(k in r))continue;let c=$('rl_'+k);
@@ -116,6 +167,7 @@ async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
  catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
 function show(s){
  showRelays(s.relays,s.relay_src);
+ if(s.preview&&!dragOn)initDrag();
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';
