@@ -49,4 +49,25 @@ Board `esp8266:esp8266:d1_mini` (ESP8266 core 3.1.x); no extra libraries.
 - Over WiFi: `firmware/flash-ota.sh [host]` (default `co2watch.fritz.box`).
   Set `ARDUINO_CLI` if `arduino-cli` is not on `PATH`.
 
+## Editing the web page
+
+The page is `co2watch/page.html`. `gen_page.py` turns it into `co2watch/page.h`
+(the PROGMEM string the firmware serves); `flash-ota.sh` runs it for you.
+Commit both files so the Arduino IDE can build without the script.
+
+Try page changes locally without flashing:
+
+```bash
+python3 firmware/emulator/emulate.py            # http://localhost:8080/
+python3 firmware/emulator/emulate.py --start 06:45 --speed 60   # watch a sunrise
+python3 firmware/emulator/emulate.py --no-ntp   # board without time (safe 30 %)
+python3 firmware/emulator/emulate.py --errors   # every 3rd POST fails
+python3 firmware/emulator/emulate.py --host 0.0.0.0   # open it from your phone
+```
+
+It serves `page.html` fresh on every request (just reload) and mocks the
+firmware API (`/api/state`, `/api/schedule`, `/dimmer`, `/white`, `/read`,
+`/metrics`) with in-memory state and simulated drop-checker readings. The
+schedule logic mirrors the firmware; keep the two in sync when changing it.
+
 Bump `FW_VERSION` with each change; it shows on the page and in `/metrics`.

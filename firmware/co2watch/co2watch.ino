@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.4.2"
+#define FW_VERSION "0.4.4"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -78,9 +78,10 @@ static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // manual hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
+// Default = leen's schedule as saved on the board on 2026-11-25.
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {360, 0, 0},   {420, 10, 0},  {510, 60, 0},  {600, 100, 0},
-    {960, 100, 0}, {1080, 60, 0}, {1170, 10, 0}, {1260, 0, 0}};
+    {420, 4, 1},   {480, 15, 0},  {510, 40, 0},  {600, 100, 0},
+    {960, 100, 0}, {1080, 40, 0}, {1170, 30, 0}, {1260, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
@@ -486,96 +487,9 @@ Colour colourOf(const Reading &r) {
 }
 
 // ---- web page ---------------------------------------------------------------
-static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>co2watch</title><style>
-:root{--bg:#f6f6f4;--fg:#1d1d1b;--mut:#6b6b66;--card:#fff;--bd:#ddd}
-@media(prefers-color-scheme:dark){:root{--bg:#161615;--fg:#eee;--mut:#9a9a94;--card:#222220;--bd:#3a3a37}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
-main{max-width:480px;margin:0 auto;padding:16px}
-section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
-h1{font-size:20px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 10px}
-#sw{height:110px;border-radius:8px;border:1px solid var(--bd);background:#000}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.big{font-size:22px;font-variant-numeric:tabular-nums}
-small,.mut{color:var(--mut)}input[type=range]{flex:1;min-width:160px}
-button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)}
-table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,th{text-align:right;padding:2px 6px}th:first-child,td:first-child{text-align:left}
-</style></head><body><main>
-<h1>co2watch <small id="ver"></small></h1>
-<section><h2>Drop checker colour</h2>
-<div id="sw"></div>
-<div class="row" style="margin-top:10px"><span class="big" id="hex">-</span><span class="big" id="hue">-</span></div>
-<small id="info">loading...</small>
-<table style="margin-top:8px"><tr><th></th><th>red</th><th>green</th><th>blue</th><th>clear</th></tr>
-<tr><td>LEDs off</td><td id="o0"></td><td id="o1"></td><td id="o2"></td><td id="o3"></td></tr>
-<tr><td>LEDs on</td><td id="n0"></td><td id="n1"></td><td id="n2"></td><td id="n3"></td></tr>
-<tr><td>net</td><td id="d0"></td><td id="d1"></td><td id="d2"></td><td></td></tr>
-<tr><td>white gain</td><td id="g0"></td><td id="g1"></td><td id="g2"></td><td></td></tr></table>
-<div class="row" style="margin-top:10px"><button onclick="act('/read')">Take reading now</button>
-<button onclick="if(confirm('Use the current reading as white? Do this with the sensor on the white backing.'))act('/white?set=1')">Use as white reference</button>
-<button onclick="act('/white?reset=1')">Reset white</button></div>
-</section>
-<section><h2>Light dimmer</h2>
-<div class="row"><input type="range" id="lv" min="0" max="100" oninput="editing=1;lvo.textContent=this.value+' %'" onchange="setDim()">
-<span class="big" id="lvo">-</span><button onclick="setDim()">Set</button></div>
-<small id="dinfo"></small>
-<div class="row" id="ovr" style="margin-top:8px;display:none"><button onclick="sch('resume=1')">Resume schedule now</button></div></section>
-<section><h2>Light schedule</h2>
-<div class="row"><label><input type="checkbox" id="en" onchange="sch('en='+(this.checked?1:0))"> Schedule on</label>
-<span class="mut" id="clk"></span></div>
-<canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
-<table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
-<div class="row" style="margin-top:10px"><button onclick="saveSch()">Save schedule</button>
-<button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div>
-<small>Each point fades to the next one: smooth (sunrise-like), linear, or step (jump at the next point). A manual change pauses the schedule for 1 hour. Without NTP time the light goes to 30 %.</small></section>
-</main><script>
-const $=id=>document.getElementById(id);let busy=0,editing=0,S=null,schDirty=0,nowMin=null;
-const RN=['smooth','linear','step'];
-const hm=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
-function lvAt(p,m){let i=7;for(let k=0;k<8;k++)if(p[k][0]<=m)i=k;const j=(i+1)%8;
- let sp=p[j][0]-p[i][0];if(sp<=0)sp+=1440;let d=m-p[i][0];if(d<0)d+=1440;let f=Math.min(d/sp,1);
- const a=p[i][1],b=p[j][1];if(p[i][2]==2)return a;if(p[i][2]==0)f=(1-Math.cos(Math.PI*f))/2;return a+(b-a)*f}
-function readTb(){const p=[];for(let k=0;k<8;k++){const v=$('t'+k).value.trim(),t=/^([01]?[0-9]|2[0-3]):([0-5][0-9])$/.exec(v);
- if(!t)throw 'Point '+(k+1)+': time "'+v+'" must be 24-hour HH:MM';
- p.push([(+t[1])*60+(+t[2]),Math.max(0,Math.min(100,+$('l'+k).value||0)),+$('r'+k).value])}return p}
-function draw(){const c=$('cv'),w=c.clientWidth,h=150,x=c.getContext('2d');c.width=w;
- let p=S.pts;if(schDirty)try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){}
- const cs=getComputedStyle(document.body),fg=cs.color,X=m=>m/1440*(w-30)+25,Y=v=>h-18-v/100*(h-28);
- x.clearRect(0,0,w,h);x.font='10px system-ui';x.fillStyle=fg;x.strokeStyle='rgba(128,128,128,.3)';
- for(let hh=0;hh<=24;hh+=3){x.beginPath();x.moveTo(X(hh*60),Y(0));x.lineTo(X(hh*60),Y(100));x.stroke();x.fillText(hh,X(hh*60)-4,h-4)}
- for(const v of[0,50,100]){x.fillText(v,0,Y(v)+3)}
- x.strokeStyle='#e0a020';x.lineWidth=2;x.beginPath();for(let m=0;m<=1440;m+=5){const v=lvAt(p,m%1440);m?x.lineTo(X(m),Y(v)):x.moveTo(X(m),Y(v))}x.stroke();
- x.fillStyle='#e0a020';for(const q of p){x.beginPath();x.arc(X(q[0]),Y(q[1]),3,0,7);x.fill()}
- if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(0));x.lineTo(X(nowMin),Y(100));x.stroke()}}
-function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
- S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
- tb.oninput=tb.onchange=()=>{schDirty=1;draw()};$('en').checked=S.en;schDirty=0;draw()}
-async function loadSch(){S=await (await fetch('/api/schedule')).json();fillTb()}
-async function sch(a){busy=1;try{const r=await fetch('/api/schedule?'+a,{method:'POST'});if(!r.ok)alert(await r.text());else{S=await r.json();fillTb()}}finally{busy=0;load()}}
-function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){alert(e);return}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){alert('Two points have the same time');return}
- sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';')))}
-function show(s){
- $('ver').textContent='v'+s.version;
- $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
- $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';
- $('hue').textContent=s.colour.ok?'hue '+s.colour.hue.toFixed(1)+'°':'';
- $('info').textContent=s.seq?('reading #'+s.seq+', '+s.age+' s ago'+(s.saturated?', SATURATED':'')+', i2c errors '+s.i2c_errors):'no reading yet';
- for(let i=0;i<4;i++){$('o'+i).textContent=s.off[i];$('n'+i).textContent=s.on[i];}
- for(let i=0;i<3;i++){$('d'+i).textContent=s.colour.net[i];$('g'+i).textContent=s.wb[i].toFixed(3);}
- const lv=$('lv');lv.min=s.dim.min;lv.max=s.dim.max;
- if(!editing){lv.value=Math.round(s.dim.level);$('lvo').textContent=s.dim.level+' %';}
- const src={manual:'manual',schedule:'following the schedule',override:'manual override, schedule resumes in '+Math.ceil(s.dim.override_left/60)+' min',safe:'no time yet: safe level'}[s.dim.source];
- $('dinfo').textContent='now '+s.dim.level+' % ('+src+'), limits '+s.dim.min+'-'+s.dim.max+' %';
- $('ovr').style.display=s.dim.source=='override'?'':'none';
- $('clk').textContent=s.time_valid?s.time+' (Amsterdam)':'waiting for NTP time';
- nowMin=s.time_valid?s.minute:null;if(S)draw();
-}
-async function load(){if(busy)return;try{show(await (await fetch('/api/state')).json())}catch(e){$('info').textContent='offline?'}}
-async function act(u){busy=1;try{await fetch(u,{method:'POST'})}finally{busy=0;load()}}
-async function setDim(){await act('/dimmer?level='+$('lv').value);editing=0;load()}
-load();loadSch();setInterval(load,5000);
-</script></body></html>)HTML";
+// The page lives in page.html; page.h is generated from it by
+// firmware/gen_page.py (flash-ota.sh runs it). Edit page.html, not page.h.
+#include "page.h"
 
 void handleRoot() { server.send_P(200, "text/html", PAGE); }
 
