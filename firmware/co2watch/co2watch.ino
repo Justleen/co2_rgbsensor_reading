@@ -53,7 +53,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.3.0"
+#define FW_VERSION "0.3.1"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -346,11 +346,11 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <button onclick="act('/white?reset=1')">Reset white</button></div>
 </section>
 <section><h2>Light dimmer</h2>
-<div class="row"><input type="range" id="lv" min="0" max="100" oninput="lvo.textContent=this.value+' %'">
+<div class="row"><input type="range" id="lv" min="0" max="100" oninput="editing=1;lvo.textContent=this.value+' %'" onchange="setDim()">
 <span class="big" id="lvo">-</span><button onclick="setDim()">Set</button></div>
 <small id="dinfo"></small></section>
 </main><script>
-const $=id=>document.getElementById(id);let busy=0;
+const $=id=>document.getElementById(id);let busy=0,editing=0;
 function show(s){
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
@@ -360,12 +360,12 @@ function show(s){
  for(let i=0;i<4;i++){$('o'+i).textContent=s.off[i];$('n'+i).textContent=s.on[i];}
  for(let i=0;i<3;i++){$('d'+i).textContent=s.colour.net[i];$('g'+i).textContent=s.wb[i].toFixed(3);}
  const lv=$('lv');lv.min=s.dim.min;lv.max=s.dim.max;
- if(document.activeElement!==lv){lv.value=s.dim.level;$('lvo').textContent=s.dim.level+' %';}
+ if(!editing){lv.value=s.dim.level;$('lvo').textContent=s.dim.level+' %';}
  $('dinfo').textContent='now '+s.dim.level+' %, limits '+s.dim.min+'-'+s.dim.max+' %';
 }
 async function load(){if(busy)return;try{show(await (await fetch('/api/state')).json())}catch(e){$('info').textContent='offline?'}}
 async function act(u){busy=1;try{await fetch(u,{method:'POST'})}finally{busy=0;load()}}
-function setDim(){act('/dimmer?level='+$('lv').value)}
+async function setDim(){await act('/dimmer?level='+$('lv').value);editing=0;load()}
 load();setInterval(load,5000);
 </script></body></html>)HTML";
 
