@@ -3,6 +3,8 @@
 `co2watch/` is the Arduino sketch for the Wemos D1 mini (ESP8266) that reads the
 drop checker and drives the light dimmer.
 
+<img src="../docs/img/web-ui.png" alt="co2watch web page (v0.4.4)" width="320">
+
 ## What it does
 
 - Reads the TCS34725 every 5 minutes as two frames, LEDs off then on. The LEDs
