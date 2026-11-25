@@ -20,6 +20,13 @@
 // While the D1 boots or resets, D6 is low, so the LCM sits at its minimum
 // (a dim glow, not off) for about a second.
 //
+// Light schedule: 8 points (time + level), each with a ramp to the next point
+// (smooth = cosine, linear, or step), wrapping around midnight. Local time
+// comes from NTP in Europe/Amsterdam (DST handled by the TZ rule). When the
+// schedule is on: a manual change holds for 1 hour, then the schedule resumes;
+// without a valid time the light goes to SAFE_PCT. When it is off, only manual
+// control applies. Edit it on the web page; it is stored in flash.
+//
 // Web page at http://<host>/ : set the dimmer and see the drop-checker colour
 // (net = LEDs on - LEDs off, white-balanced, as a swatch, hex and hue). The
 // white balance is display-only; /metrics keeps the raw counts for the model.
@@ -53,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.3.1"
+#define FW_VERSION "0.4.2"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -63,6 +70,17 @@ static const uint8_t DIM_MAX_PCT = 100;     // highest level a request can set
 static const uint8_t DIM_FIRST_BOOT_PCT = 0;  // used until a level is ever set
 static const uint8_t EEPROM_MAGIC = 0xD1;
 static const uint8_t EEPROM_WB_MAGIC = 0xB4;  // byte 2; gains at bytes 4..15
+static const uint8_t EEPROM_SCHED_MAGIC = 0x5C;  // byte 16; enable 17; points 18..49
+
+// ---- schedule ---------------------------------------------------------------
+static const char *TZ_AMSTERDAM = "CET-1CEST,M3.5.0,M10.5.0/3";
+static const float SAFE_PCT = 30;                       // no valid time
+static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // manual hold
+enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
+struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
+static const SchedPoint SCHED_DEFAULT[8] = {
+    {360, 0, 0},   {420, 10, 0},  {510, 60, 0},  {600, 100, 0},
+    {960, 100, 0}, {1080, 60, 0}, {1170, 10, 0}, {1260, 0, 0}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
@@ -97,7 +115,13 @@ struct Colour {
 };
 
 uint32_t i2cErrors = 0;
-uint8_t dimPct = 0;
+uint8_t dimPct = 0;     // last manual level
+float dimOut = 0;       // what D6 actually outputs, in %
+SchedPoint sched[8];
+bool schedEnabled = false;
+bool overrideActive = false;
+uint32_t overrideStart = 0;
+const char *dimSource = "manual";  // manual / schedule / override / safe
 uint32_t dimChanges = 0;
 uint32_t lastReadMs = 0;
 bool haveReading = false;
@@ -229,25 +253,172 @@ uint8_t clampDim(int pct) {
   return (uint8_t)pct;
 }
 
+void setOutput(float pct) {
+  if (pct < DIM_MIN_PCT) pct = DIM_MIN_PCT;
+  if (pct > DIM_MAX_PCT) pct = DIM_MAX_PCT;
+  dimOut = pct;
+  analogWrite(DIM_PIN, (int)(pct * 10 + 0.5f));  // range 0..1000, 0.1 % steps
+}
+
+// A manual change: from the page, /dimmer or serial.
 void applyDim(uint8_t pct, bool save) {
   dimPct = clampDim(pct);
-  analogWrite(DIM_PIN, dimPct * 10);  // range 0..1000
+  setOutput(dimPct);
   if (save) {
     dimChanges++;
     EEPROM.write(0, EEPROM_MAGIC);
     EEPROM.write(1, dimPct);
     EEPROM.commit();
+    if (schedEnabled) {
+      overrideActive = true;
+      overrideStart = millis();
+      dimSource = "override";
+    }
   }
-  Serial.printf("dimmer: %u %% (limits %u-%u)\n", dimPct, DIM_MIN_PCT, DIM_MAX_PCT);
+  Serial.printf("dimmer: %u %% (limits %u-%u)%s\n", dimPct, DIM_MIN_PCT, DIM_MAX_PCT,
+                overrideActive ? ", schedule paused 1 h" : "");
+}
+
+// ---- schedule ---------------------------------------------------------------
+bool timeValid() { return time(nullptr) > 1700000000; }
+
+float minuteOfDay() {
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  return t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f;
+}
+
+float schedLevelAt(float m) {
+  int i = 7;  // before the first point: still in the segment from the last one
+  for (int k = 0; k < 8; k++)
+    if (sched[k].min <= m) i = k;
+  int j = (i + 1) % 8;
+  float span = (float)sched[j].min - sched[i].min;
+  if (span <= 0) span += 1440;
+  float d = m - sched[i].min;
+  if (d < 0) d += 1440;
+  float f = d / span;
+  if (f > 1) f = 1;
+  float a = sched[i].level, b = sched[j].level;
+  if (sched[i].ramp == RAMP_STEP) return a;
+  if (sched[i].ramp == RAMP_SMOOTH) f = (1 - cosf(PI * f)) / 2;
+  return a + (b - a) * f;
+}
+
+bool schedValid(const SchedPoint *p) {
+  for (int k = 0; k < 8; k++) {
+    if (p[k].min >= 1440 || p[k].level > 100 || p[k].ramp > RAMP_STEP) return false;
+    if (k && p[k].min <= p[k - 1].min) return false;  // strictly increasing
+  }
+  return true;
+}
+
+void schedSave() {
+  EEPROM.write(16, EEPROM_SCHED_MAGIC);
+  EEPROM.write(17, schedEnabled);
+  EEPROM.put(18, sched);
+  EEPROM.commit();
+}
+
+void schedLoad() {
+  memcpy(sched, SCHED_DEFAULT, sizeof sched);
+  schedEnabled = false;
+  if (EEPROM.read(16) != EEPROM_SCHED_MAGIC) return;
+  SchedPoint p[8];
+  EEPROM.get(18, p);
+  if (!schedValid(p)) return;
+  memcpy(sched, p, sizeof sched);
+  schedEnabled = EEPROM.read(17) == 1;
+}
+
+// Called every second.
+void schedTick() {
+  if (!schedEnabled) {
+    overrideActive = false;
+    dimSource = "manual";
+    return;
+  }
+  if (overrideActive) {
+    if (millis() - overrideStart < OVERRIDE_MS) return;
+    overrideActive = false;
+    Serial.println(F("schedule: manual override expired"));
+  }
+  if (!timeValid()) {
+    dimSource = "safe";
+    setOutput(SAFE_PCT);
+  } else {
+    dimSource = "schedule";
+    setOutput(schedLevelAt(minuteOfDay()));
+  }
+}
+
+void sendSchedule() {
+  String b = "{\"en\":";
+  b += schedEnabled ? "true" : "false";
+  b += ",\"pts\":[";
+  for (int k = 0; k < 8; k++) {
+    if (k) b += ',';
+    b += '[';
+    b += sched[k].min; b += ','; b += sched[k].level; b += ','; b += sched[k].ramp;
+    b += ']';
+  }
+  b += "]}";
+  server.send(200, "application/json", b);
+}
+
+// GET: current schedule. POST args: en=0|1, pts="min,level,ramp;..." (8),
+// reset=1 (defaults, keeps en), resume=1 (end the manual override now).
+void handleSchedule() {
+  if (server.hasArg("reset")) memcpy(sched, SCHED_DEFAULT, sizeof sched);
+  if (server.hasArg("pts")) {
+    SchedPoint p[8];
+    String v = server.arg("pts");
+    int pos = 0;
+    for (int k = 0; k < 8; k++) {
+      unsigned m, l, r;
+      int used = 0;
+      if (sscanf(v.c_str() + pos, "%u,%u,%u%n", &m, &l, &r, &used) != 3 ||
+          m > 65535 || l > 255 || r > 255) {
+        server.send(400, "text/plain", "pts must be 8 entries min,level,ramp\n");
+        return;
+      }
+      p[k] = {(uint16_t)m, (uint8_t)l, (uint8_t)r};
+      pos += used;
+      if (v[pos] == ';') pos++;
+    }
+    if (!schedValid(p)) {
+      server.send(400, "text/plain", "times must increase, levels 0-100, ramp 0-2\n");
+      return;
+    }
+    memcpy(sched, p, sizeof sched);
+  }
+  if (server.hasArg("en")) {
+    bool en = server.arg("en") == "1";
+    if (!en && schedEnabled) {
+      dimPct = clampDim((int)(dimOut + 0.5f));  // keep the light where it is
+      EEPROM.write(0, EEPROM_MAGIC);
+      EEPROM.write(1, dimPct);
+    }
+    schedEnabled = en;
+    overrideActive = false;
+  }
+  if (server.hasArg("resume")) overrideActive = false;
+  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("en")) schedSave();
+  schedTick();
+  sendSchedule();
 }
 
 void dimmerBegin() {
   analogWriteFreq(DIM_PWM_HZ);
   analogWriteRange(1000);
-  EEPROM.begin(32);
+  EEPROM.begin(64);
   uint8_t pct = DIM_FIRST_BOOT_PCT;
   if (EEPROM.read(0) == EEPROM_MAGIC) pct = EEPROM.read(1);
-  applyDim(pct, false);
+  schedLoad();
+  if (schedEnabled) setOutput(SAFE_PCT);  // until NTP gives the time
+  else applyDim(pct, false);
+  dimPct = clampDim(pct);
   wbLoad();
 }
 
@@ -262,9 +433,9 @@ void handleDimmer() {
     }
     applyDim((uint8_t)pct, true);
   }
-  char body[96];
-  snprintf(body, sizeof body, "{\"level\":%u,\"min\":%u,\"max\":%u}\n", dimPct,
-           DIM_MIN_PCT, DIM_MAX_PCT);
+  char body[128];
+  snprintf(body, sizeof body, "{\"level\":%.1f,\"min\":%u,\"max\":%u,\"source\":\"%s\"}\n",
+           dimOut, DIM_MIN_PCT, DIM_MAX_PCT, dimSource);
   server.send(200, "application/json", body);
 }
 
@@ -348,9 +519,42 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <section><h2>Light dimmer</h2>
 <div class="row"><input type="range" id="lv" min="0" max="100" oninput="editing=1;lvo.textContent=this.value+' %'" onchange="setDim()">
 <span class="big" id="lvo">-</span><button onclick="setDim()">Set</button></div>
-<small id="dinfo"></small></section>
+<small id="dinfo"></small>
+<div class="row" id="ovr" style="margin-top:8px;display:none"><button onclick="sch('resume=1')">Resume schedule now</button></div></section>
+<section><h2>Light schedule</h2>
+<div class="row"><label><input type="checkbox" id="en" onchange="sch('en='+(this.checked?1:0))"> Schedule on</label>
+<span class="mut" id="clk"></span></div>
+<canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
+<table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
+<div class="row" style="margin-top:10px"><button onclick="saveSch()">Save schedule</button>
+<button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div>
+<small>Each point fades to the next one: smooth (sunrise-like), linear, or step (jump at the next point). A manual change pauses the schedule for 1 hour. Without NTP time the light goes to 30 %.</small></section>
 </main><script>
-const $=id=>document.getElementById(id);let busy=0,editing=0;
+const $=id=>document.getElementById(id);let busy=0,editing=0,S=null,schDirty=0,nowMin=null;
+const RN=['smooth','linear','step'];
+const hm=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+function lvAt(p,m){let i=7;for(let k=0;k<8;k++)if(p[k][0]<=m)i=k;const j=(i+1)%8;
+ let sp=p[j][0]-p[i][0];if(sp<=0)sp+=1440;let d=m-p[i][0];if(d<0)d+=1440;let f=Math.min(d/sp,1);
+ const a=p[i][1],b=p[j][1];if(p[i][2]==2)return a;if(p[i][2]==0)f=(1-Math.cos(Math.PI*f))/2;return a+(b-a)*f}
+function readTb(){const p=[];for(let k=0;k<8;k++){const v=$('t'+k).value.trim(),t=/^([01]?[0-9]|2[0-3]):([0-5][0-9])$/.exec(v);
+ if(!t)throw 'Point '+(k+1)+': time "'+v+'" must be 24-hour HH:MM';
+ p.push([(+t[1])*60+(+t[2]),Math.max(0,Math.min(100,+$('l'+k).value||0)),+$('r'+k).value])}return p}
+function draw(){const c=$('cv'),w=c.clientWidth,h=150,x=c.getContext('2d');c.width=w;
+ let p=S.pts;if(schDirty)try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){}
+ const cs=getComputedStyle(document.body),fg=cs.color,X=m=>m/1440*(w-30)+25,Y=v=>h-18-v/100*(h-28);
+ x.clearRect(0,0,w,h);x.font='10px system-ui';x.fillStyle=fg;x.strokeStyle='rgba(128,128,128,.3)';
+ for(let hh=0;hh<=24;hh+=3){x.beginPath();x.moveTo(X(hh*60),Y(0));x.lineTo(X(hh*60),Y(100));x.stroke();x.fillText(hh,X(hh*60)-4,h-4)}
+ for(const v of[0,50,100]){x.fillText(v,0,Y(v)+3)}
+ x.strokeStyle='#e0a020';x.lineWidth=2;x.beginPath();for(let m=0;m<=1440;m+=5){const v=lvAt(p,m%1440);m?x.lineTo(X(m),Y(v)):x.moveTo(X(m),Y(v))}x.stroke();
+ x.fillStyle='#e0a020';for(const q of p){x.beginPath();x.arc(X(q[0]),Y(q[1]),3,0,7);x.fill()}
+ if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(0));x.lineTo(X(nowMin),Y(100));x.stroke()}}
+function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
+ S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
+ tb.oninput=tb.onchange=()=>{schDirty=1;draw()};$('en').checked=S.en;schDirty=0;draw()}
+async function loadSch(){S=await (await fetch('/api/schedule')).json();fillTb()}
+async function sch(a){busy=1;try{const r=await fetch('/api/schedule?'+a,{method:'POST'});if(!r.ok)alert(await r.text());else{S=await r.json();fillTb()}}finally{busy=0;load()}}
+function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){alert(e);return}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){alert('Two points have the same time');return}
+ sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';')))}
 function show(s){
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
@@ -360,32 +564,49 @@ function show(s){
  for(let i=0;i<4;i++){$('o'+i).textContent=s.off[i];$('n'+i).textContent=s.on[i];}
  for(let i=0;i<3;i++){$('d'+i).textContent=s.colour.net[i];$('g'+i).textContent=s.wb[i].toFixed(3);}
  const lv=$('lv');lv.min=s.dim.min;lv.max=s.dim.max;
- if(!editing){lv.value=s.dim.level;$('lvo').textContent=s.dim.level+' %';}
- $('dinfo').textContent='now '+s.dim.level+' %, limits '+s.dim.min+'-'+s.dim.max+' %';
+ if(!editing){lv.value=Math.round(s.dim.level);$('lvo').textContent=s.dim.level+' %';}
+ const src={manual:'manual',schedule:'following the schedule',override:'manual override, schedule resumes in '+Math.ceil(s.dim.override_left/60)+' min',safe:'no time yet: safe level'}[s.dim.source];
+ $('dinfo').textContent='now '+s.dim.level+' % ('+src+'), limits '+s.dim.min+'-'+s.dim.max+' %';
+ $('ovr').style.display=s.dim.source=='override'?'':'none';
+ $('clk').textContent=s.time_valid?s.time+' (Amsterdam)':'waiting for NTP time';
+ nowMin=s.time_valid?s.minute:null;if(S)draw();
 }
 async function load(){if(busy)return;try{show(await (await fetch('/api/state')).json())}catch(e){$('info').textContent='offline?'}}
 async function act(u){busy=1;try{await fetch(u,{method:'POST'})}finally{busy=0;load()}}
 async function setDim(){await act('/dimmer?level='+$('lv').value);editing=0;load()}
-load();setInterval(load,5000);
+load();loadSch();setInterval(load,5000);
 </script></body></html>)HTML";
 
 void handleRoot() { server.send_P(200, "text/html", PAGE); }
 
 void handleState() {
   Colour c = colourOf(last);
-  char b[600];
+  char tbuf[12] = "";
+  float mod = 0;
+  if (timeValid()) {
+    time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    strftime(tbuf, sizeof tbuf, "%H:%M:%S", &t);
+    mod = t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f;
+  }
+  unsigned long ovLeft =
+      overrideActive ? (OVERRIDE_MS - (millis() - overrideStart)) / 1000UL : 0;
+  char b[800];
   snprintf(b, sizeof b,
            "{\"version\":\"" FW_VERSION "\",\"seq\":%lu,\"age\":%lu,\"saturated\":%s,\"i2c_errors\":%lu,"
            "\"off\":[%u,%u,%u,%u],\"on\":[%u,%u,%u,%u],"
            "\"colour\":{\"ok\":%s,\"net\":[%d,%d,%d],\"rgb\":[%u,%u,%u],\"hex\":\"%s\",\"hue\":%.1f},"
-           "\"wb\":[%.4f,%.4f,%.4f],\"dim\":{\"level\":%u,\"min\":%u,\"max\":%u}}",
+           "\"wb\":[%.4f,%.4f,%.4f],\"dim\":{\"level\":%.1f,\"min\":%u,\"max\":%u,"
+           "\"source\":\"%s\",\"override_left\":%lu},"
+           "\"time_valid\":%s,\"time\":\"%s\",\"minute\":%.2f}",
            (unsigned long)last.seq,
            haveReading ? (unsigned long)((millis() - last.millisAt) / 1000) : 0UL,
            last.saturated ? "true" : "false", (unsigned long)i2cErrors, last.off.r,
            last.off.g, last.off.b, last.off.c, last.on.r, last.on.g, last.on.b, last.on.c,
            c.ok ? "true" : "false", c.net[0], c.net[1], c.net[2], c.rgb[0], c.rgb[1],
-           c.rgb[2], c.hex, c.hue, wbGain[0], wbGain[1], wbGain[2], dimPct, DIM_MIN_PCT,
-           DIM_MAX_PCT);
+           c.rgb[2], c.hex, c.hue, wbGain[0], wbGain[1], wbGain[2], dimOut, DIM_MIN_PCT,
+           DIM_MAX_PCT, dimSource, ovLeft, timeValid() ? "true" : "false", tbuf, mod);
   server.send(200, "application/json", b);
 }
 
@@ -451,7 +672,15 @@ void handleMetrics() {
   s += F("# TYPE tcs34725_i2c_errors_total counter\n");
   line("tcs34725_i2c_errors_total", "", i2cErrors);
   line("co2watch_pcf8574_present", "", pcfAddr != 0);
-  line("aquarium_light_dim_percent", "", dimPct);
+  {
+    char num[24];
+    snprintf(num, sizeof num, " %.1f\n", dimOut);
+    s += F("aquarium_light_dim_percent");
+    s += num;
+  }
+  line("aquarium_light_schedule_enabled", "", schedEnabled);
+  line("aquarium_light_override_active", "", overrideActive);
+  line("co2watch_time_valid", "", timeValid());
   line("aquarium_light_dim_min_percent", "", DIM_MIN_PCT);
   line("aquarium_light_dim_max_percent", "", DIM_MAX_PCT);
   s += F("# TYPE aquarium_light_dim_changes_total counter\n");
@@ -484,10 +713,11 @@ void setup() {
       Serial.print('.');
     }
     Serial.println();
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    configTime(TZ_AMSTERDAM, "nl.pool.ntp.org", "pool.ntp.org");
     MDNS.begin(HOSTNAME);
     server.on("/metrics", handleMetrics);
     server.on("/dimmer", handleDimmer);
+    server.on("/api/schedule", handleSchedule);
     server.on("/", handleRoot);
     server.on("/api/state", handleState);
     server.on("/white", handleWhite);
@@ -524,6 +754,11 @@ void loop() {
       else
         Serial.printf("WiFi: status %d\n", st);
     }
+  }
+  static uint32_t lastTick = 0;
+  if (millis() - lastTick >= 1000) {
+    lastTick = millis();
+    schedTick();
   }
   if (millis() - lastReadMs >= READ_INTERVAL_MS) {
     lastReadMs = millis();

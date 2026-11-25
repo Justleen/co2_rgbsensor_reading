@@ -20,6 +20,12 @@ drop checker and drives the light dimmer.
   stored in flash and restored at boot. During a reset D6 is low, so the light
   drops to its minimum for about a second.
 
+- Light schedule (off until enabled on the page): 8 points (24-hour HH:MM +
+  level), each fading to the next one (smooth cosine, linear or step), wrapping
+  at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).
+  A manual change pauses the schedule for 1 hour; without a valid time the
+  light goes to 30 %. Stored in flash; API at `/api/schedule`.
+
 Wiring: SDA D2, SCL D1, TCS34725 at 0x29, PCF8574 at 0x20 (on the bench board).
 
 ## Secrets
