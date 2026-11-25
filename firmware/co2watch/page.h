@@ -15,6 +15,13 @@ h1{font-size:20px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 10px}
 small,.mut{color:var(--mut)}input[type=range]{flex:1;min-width:160px}
 button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer;transition:transform .08s,filter .08s,background .2s}
 button:hover{filter:brightness(.95)}button:active{transform:scale(.94);filter:brightness(.8)}button:disabled{opacity:.6;cursor:wait}
+.rl{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.rl label{display:flex;align-items:center;gap:8px;cursor:pointer}
+.sw{position:relative;width:46px;height:26px;flex:none}.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw i{position:absolute;inset:0;border-radius:13px;background:var(--bd);transition:background .25s}
+.sw i:before{content:'';position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .25s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.sw input:checked+i{background:#2e8b57}.sw input:checked+i:before{transform:translateX(20px)}
+.sw input:disabled+i{opacity:.6}.badge{font-size:11px;font-weight:normal;padding:1px 6px;border-radius:9px;background:#e0a020;color:#000;margin-left:6px}
 #toast{position:fixed;top:10px;left:50%;transform:translate(-50%,-8px);max-width:90vw;padding:7px 14px;border-radius:8px;font-size:14px;pointer-events:none;opacity:0;transition:opacity .3s,transform .3s;z-index:9;white-space:pre-line;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0)}#toast.ok{background:#dcefdc;color:#1f5223;border:1px solid #a9d3a9}#toast.err{background:#f6dcdc;color:#7a1f1f;border:1px solid #e0a9a9}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,th{text-align:right;padding:2px 6px}th:first-child,td:first-child{text-align:left}
@@ -33,6 +40,16 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <button onclick="if(confirm('Use the current reading as white? Do this with the sensor on the white backing.'))act('/white?set=1')">Use as white reference</button>
 <button onclick="act('/white?reset=1')">Reset white</button></div>
 </section>
+<section id="relays" style="display:none"><h2>Relays<span class="badge">preview</span></h2>
+<div class="rl" id="rl"></div>
+<ul class="mut" style="margin:8px 0 0;padding-left:18px;font-size:13px">
+<li>Switches show the live relay state</li>
+<li><b>CO2</b> (auto): 2 h before peak, until light &lt; 60 %</li>
+<li><b>Air</b> (auto): light &lt; 40 %</li>
+<li>Manual toggle = 1 h override</li>
+<li>Air on &rarr; CO2 forced off</li>
+<li>Heat &amp; Pump: manual</li>
+<li>Preview only, not wired</li></ul></section>
 <section><h2>Light dimmer</h2>
 <div class="row"><input type="range" id="lv" min="0" max="100" oninput="editing=1;lvo.textContent=this.value+' %'" onchange="setDim()">
 <span class="big" id="lvo">-</span><button onclick="setDim()">Set</button></div>
@@ -62,7 +79,15 @@ function lvAt(p,m){let i=7;for(let k=0;k<8;k++)if(p[k][0]<=m)i=k;const j=(i+1)%8
 function readTb(){const p=[];for(let k=0;k<8;k++){const v=$('t'+k).value.trim(),t=/^([01]?[0-9]|2[0-3]):([0-5][0-9])$/.exec(v);
  if(!t)throw 'Point '+(k+1)+': time "'+v+'" must be 24-hour HH:MM';
  p.push([(+t[1])*60+(+t[2]),Math.max(0,Math.min(100,+$('l'+k).value||0)),+$('r'+k).value])}return p}
-function draw(){const c=$('cv'),w=c.clientWidth,h=150,x=c.getContext('2d');c.width=w;
+// Relay rules derived from the light schedule (preview; mirrored in the emulator):
+// CO2 on 2 h before the light first reaches its peak (100 %), off once it drops below 60 % after the peak.
+// Air on whenever the light is below 40 %. Air wins: CO2 is never on while air is on.
+const inWin=(m,a,b)=>a<=b?(m>=a&&m<b):(m>=a||m<b);
+function rules(p){const L=[];for(let m=0;m<1440;m++)L.push(lvAt(p,m));const mx=Math.max(...L),pk=L.findIndex(v=>v>=mx-1e-6);
+ let off=-1;for(let k=pk;k<pk+1440;k++)if(L[k%1440]<60){off=k%1440;break}
+ return{co2on:(pk-120+1440)%1440,co2off:off,co2:m=>off<0||inWin(m,(pk-120+1440)%1440,off),air:m=>L[Math.floor(m)%1440]<40}}
+let hasRelays=0;
+function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.getContext('2d');c.width=w;c.height=H;
  let p=S.pts;if(schDirty)try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){}
  const cs=getComputedStyle(document.body),fg=cs.color,X=m=>m/1440*(w-30)+25,Y=v=>h-18-v/100*(h-28);
  x.clearRect(0,0,w,h);x.font='10px system-ui';x.fillStyle=fg;x.strokeStyle='rgba(128,128,128,.3)';
@@ -70,7 +95,12 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=150,x=c.getContext('2d');c.wid
  for(const v of[0,50,100]){x.fillText(v,0,Y(v)+3)}
  x.strokeStyle='#e0a020';x.lineWidth=2;x.beginPath();for(let m=0;m<=1440;m+=5){const v=lvAt(p,m%1440);m?x.lineTo(X(m),Y(v)):x.moveTo(X(m),Y(v))}x.stroke();
  x.fillStyle='#e0a020';for(const q of p){x.beginPath();x.arc(X(q[0]),Y(q[1]),3,0,7);x.fill()}
- if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(0));x.lineTo(X(nowMin),Y(100));x.stroke()}}
+ if(hasRelays){const R=rules(p),lanes=[['CO2','#2e8b57',m=>R.co2(m)&&!R.air(m),158],['Air','#3b7dd8',R.air,176]];
+  for(const[nm,col,f,y]of lanes){x.fillStyle='rgba(128,128,128,.15)';x.fillRect(X(0),y,X(1440)-X(0),12);x.fillStyle=col;
+   let st=null;for(let m=0;m<=1440;m++){const on=m<1440&&f(m);if(on&&st==null)st=m;if(!on&&st!=null){x.fillRect(X(st),y,X(m)-X(st),12);st=null}}
+   x.fillStyle=fg;x.fillText(nm,0,y+10)}
+  x.strokeStyle='rgba(128,128,128,.5)';x.setLineDash([3,3]);for(const v of[60,40]){x.beginPath();x.moveTo(X(0),Y(v));x.lineTo(X(1440),Y(v));x.stroke()}x.setLineDash([])}
+ if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(0));x.lineTo(X(nowMin),hasRelays?188:Y(0));x.stroke()}}
 function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
  S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
  tb.oninput=tb.onchange=()=>{schDirty=1;draw()};$('en').checked=S.en;schDirty=0;draw()}
@@ -78,7 +108,16 @@ async function loadSch(){S=await (await fetch('/api/schedule')).json();fillTb()}
 async function sch(a){busy=1;const b=btnStart();let ok=false;try{const r=await fetch('/api/schedule?'+a,{method:'POST'});if(!r.ok)bad(await r.text());else{S=await r.json();fillTb();ok=true}}catch(e){bad('No answer from the board')}finally{busy=0;btnEnd(b);if(ok)done(b);load()}}
 function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){bad(e);return}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){bad('Two points have the same time');return}
  sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';')))}
+const RL={co2:'CO2',air:'Air',heat:'Heat',pump:'Pump'},rlBusy={};
+function showRelays(r,src){const sec=$('relays');if(!r){sec.style.display='none';hasRelays=0;return}sec.style.display='';hasRelays=1;src=src||{};const box=$('rl');
+ for(const k in RL){if(!(k in r))continue;let c=$('rl_'+k);
+  if(!c){const l=document.createElement('label');l.innerHTML='<span class="sw"><input type="checkbox" id="rl_'+k+'"><i></i></span>'+RL[k]+' <small class="mut" id="rs_'+k+'"></small>';box.appendChild(l);c=$('rl_'+k);c.onchange=()=>setRelay(k,c.checked)}
+  if(!rlBusy[k])c.checked=!!r[k];$('rs_'+k).textContent={schedule:'auto',override:'manual 1 h',safe:'safe',interlock:'off: air is on'}[src[k]]||''}}
+async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
+ try{const r=await fetch('/relay?name='+k+'&on='+(on?1:0),{method:'POST'});if(!r.ok){bad(await r.text());c.checked=!on}else toast(RL[k]+(on?' on':' off'),true)}
+ catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
 function show(s){
+ showRelays(s.relays,s.relay_src);
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';

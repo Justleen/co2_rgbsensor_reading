@@ -11,6 +11,7 @@ reload) plus mock versions of the firmware's HTTP API, with state in memory:
   /white            POST set=1 | reset=1
   /read             POST: take a reading now
   /metrics          Prometheus text, same names as the firmware
+  /relay            POST name=co2|air|heat|pump&on=0|1 (PREVIEW: emulator only)
 
 Readings are simulated: the drop-checker hue drifts blue at night to green/lime
 in the day, with a little noise. Python stdlib only.
@@ -36,12 +37,17 @@ PAGE = Path(__file__).resolve().parent.parent / "co2watch" / "page.html"
 TZ = ZoneInfo("Europe/Amsterdam")
 
 # Keep in sync with co2watch.ino.
-FW_VERSION = "emulator"
+_m = __import__("re").search(r'#define FW_VERSION "([^"]+)"',
+                            (PAGE.parent / "co2watch.ino").read_text())
+FW_VERSION = (_m.group(1) if _m else "?") + "-emulator"
 DIM_MIN, DIM_MAX = 0, 100
 SAFE_PCT = 30.0
 OVERRIDE_S = 3600
-SCHED_DEFAULT = [[420, 4, 1], [480, 15, 0], [510, 40, 0], [600, 100, 0],
-                 [960, 100, 0], [1080, 40, 0], [1170, 30, 0], [1260, 0, 1]]
+# Preview: 100 % from 11:00 to 18:00 (7 h full light, CO2 from 09:00), down to
+# 30 % by 19:00, hold 30 % until 20:30, then fade to 0 % by 21:30.
+# The firmware default still peaks at 10:00.
+SCHED_DEFAULT = [[420, 4, 1], [480, 15, 0], [510, 40, 0], [660, 100, 0],
+                 [1080, 100, 0], [1140, 30, 0], [1230, 30, 0], [1290, 0, 1]]
 ATIME, GAIN = 0xC0, 4
 MAX_COUNT = min((256 - ATIME) * 1024, 65535)
 
@@ -65,6 +71,10 @@ class Board:
         self.override_until = None
         self.source = "manual"
         self.posts = 0
+        # Relay preview (mockup only; the firmware has no relay code yet).
+        self.relays = {"co2": True, "air": False, "heat": False, "pump": True}
+        self.relay_override = {}   # name -> monotonic time the manual hold ends
+        self.relay_src = {k: "manual" for k in self.relays}
         self.take_reading()
 
     # --- time -------------------------------------------------------------
@@ -157,7 +167,52 @@ class Board:
             f = (1 - math.cos(math.pi * f)) / 2
         return a + (b - a) * f
 
+    def relay_rules(self):
+        """CO2: on 2 h before the light first reaches its peak, off once it drops
+        below 60 % after the peak. Air: on while the light is below 40 %."""
+        L = [self.sched_level(m) for m in range(1440)]
+        mx = max(L)
+        pk = next(m for m, v in enumerate(L) if v >= mx - 1e-6)
+        on = (pk - 120) % 1440
+        off = next((k % 1440 for k in range(pk, pk + 1440) if L[k % 1440] < 60), None)
+        return on, off, L
+
+    def tick_relays(self):
+        now = time.monotonic()
+        for k in ("co2", "air"):
+            if not self.sched_en:
+                self.relay_override.pop(k, None)
+                self.relay_src[k] = "manual"
+                continue
+            if k in self.relay_override:
+                if now < self.relay_override[k]:
+                    self.relay_src[k] = "override"
+                    continue
+                del self.relay_override[k]
+            if not self.time_valid():
+                self.relay_src[k] = "safe"           # no time: CO2 off, air on
+                self.relays[k] = k == "air"
+                continue
+            on, off, L = self.relay_rules()
+            m = self.minute()
+            if k == "co2":
+                if off is None:
+                    want = True
+                elif on <= off:
+                    want = on <= m < off
+                else:
+                    want = m >= on or m < off
+            else:
+                want = L[int(m) % 1440] < 40
+            self.relays[k] = want
+            self.relay_src[k] = "schedule"
+        # Hard interlock: CO2 and air are never on together; air wins (safe for fish).
+        if self.relays["air"]:
+            self.relays["co2"] = False
+            self.relay_src["co2"] = "interlock"
+
     def tick(self):
+        self.tick_relays()
         if not self.sched_en:
             self.override_until = None
             self.source = "manual"
@@ -194,6 +249,7 @@ class Board:
                     "source": self.source, "override_left": self.override_left()},
             "time_valid": valid, "time": t.strftime("%H:%M:%S") if valid else "",
             "minute": round(self.minute(), 2) if valid else 0,
+            "relays": dict(self.relays), "relay_src": dict(self.relay_src),
         }
 
     def schedule(self):
@@ -312,6 +368,22 @@ def make_handler(board):
                         return
                     board.wb = [max(net) / n for n in net]
                 self.j(board.state())
+            elif u.path == "/relay":
+                name = q.get("name", "")
+                if name not in board.relays:
+                    self.send(400, "name must be one of co2, air, heat, pump\n", "text/plain")
+                    return
+                if "on" in q:
+                    board.tick()
+                    if name == "co2" and q["on"] == "1" and board.relays["air"]:
+                        self.send(409, "Air is on: CO2 stays off (air takes precedence)\n",
+                                  "text/plain")
+                        return
+                    board.relays[name] = q["on"] == "1"
+                    if board.sched_en and name in ("co2", "air"):
+                        board.relay_override[name] = time.monotonic() + OVERRIDE_S
+                board.tick()
+                self.j(board.relays)
             elif u.path == "/api/schedule":
                 if "reset" in q:
                     board.sched = [p[:] for p in SCHED_DEFAULT]
@@ -327,8 +399,10 @@ def make_handler(board):
                         board.dim_pct = int(board.dim_out + 0.5)
                     board.sched_en = en
                     board.override_until = None
+                    board.relay_override.clear()
                 if "resume" in q:
                     board.override_until = None
+                    board.relay_override.clear()
                 board.tick()
                 self.j(board.schedule())
             else:
@@ -348,6 +422,8 @@ def main():
     ap.add_argument("--start", help="simulated start time HH:MM (today, Amsterdam)")
     ap.add_argument("--reading-every", type=float, default=300,
                     help="seconds between simulated readings (default 300)")
+    ap.add_argument("--relay-flip", type=float, default=20,
+                    help="seconds between random relay flips, 0 = off (default 20)")
     args = ap.parse_args()
 
     board = Board(args)
@@ -366,6 +442,15 @@ def main():
             time.sleep(args.reading_every)
             board.take_reading()
     threading.Thread(target=reader, daemon=True).start()
+
+    def flipper():
+        # Flip a random relay now and then so the state display can be seen moving.
+        while args.relay_flip > 0:
+            time.sleep(args.relay_flip)
+            k = random.choice(["heat", "pump"])  # CO2/air follow the schedule rules
+            board.relays[k] = not board.relays[k]
+            print(f"(emulator) relay {k} -> {'on' if board.relays[k] else 'off'}")
+    threading.Thread(target=flipper, daemon=True).start()
 
     print(f"co2watch emulator on http://{'localhost' if args.host == '127.0.0.1' else args.host}:{args.port}/"
           f"  (page: {PAGE}, edits show on reload)")
