@@ -22,7 +22,8 @@ drop checker and drives the light dimmer.
   stored in flash and restored at boot. During a reset D6 is low, so the light
   drops to its minimum for about a second.
 
-- Light schedule (off until enabled on the page): 8 points (24-hour HH:MM +
+- Light schedule (off until enabled on the page; default: 100 % from 11:00 to 18:00,
+  30 % until 20:30, off by 21:30): 8 points (24-hour HH:MM +
   level), each fading to the next one (smooth cosine, linear or step), wrapping
   at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).
   A manual change pauses the schedule for 1 hour; without a valid time the
@@ -50,6 +51,33 @@ Board `esp8266:esp8266:d1_mini` (ESP8266 core 3.1.x); no extra libraries.
   (your user needs to be in the `dialout` group).
 - Over WiFi: `firmware/flash-ota.sh [host]` (default `co2watch.fritz.box`).
   Set `ARDUINO_CLI` if `arduino-cli` is not on `PATH`.
+
+### Relay preview (emulator only)
+
+The emulator also shows a **preview** of a relay section (CO2, Air, Heat, Pump)
+with switch-style sliders that both control and show each relay. While the
+schedule is on, CO2 and Air follow rules derived from the light schedule: CO2
+from 2 h before the light peaks until it drops below 60 %, Air whenever the light
+is below 40 %. Air always wins: CO2 is never on while Air is on. A manual switch
+holds for 1 hour. Heat and Pump are manual. The schedule graph shows the CO2 and
+Air on-times as bands. **The firmware has no relay code yet**; on the D1 this
+section stays hidden because the board reports no relays.
+
+<img src="../docs/img/web-ui-relay-preview.png" alt="Emulator page with the relay preview and CO2/Air bands on the schedule graph" width="320">
+
+### Schedule drag editing (emulator only)
+
+In the emulator the schedule graph is editable by dragging. The 100 % stretch is
+a bar of exactly "Hours at 100 %" hours (default 7): drag it to move the whole
+day, change the field to resize it. Other points drag one by one (5 min snap);
+before the bar they stay below 100 %, and from the first point after it the
+light stays at 40 % or lower (shaded). The fade straight after the bar may pass
+above 40 %. Only switching on from 0 % or off to 0 % may be a step; everything
+else fades. Nothing is stored until Save schedule. **Preview only: the D1 does
+not enable this** (it is switched on by a `preview` flag only the emulator sends,
+and the firmware does not store the hours value).
+
+<img src="../docs/img/web-ui-schedule-drag.png" alt="Schedule section with the draggable 7 h bar and the shaded 40 % cap" width="320">
 
 ## Editing the web page
 

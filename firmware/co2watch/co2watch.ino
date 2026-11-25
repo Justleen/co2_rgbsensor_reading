@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.4.4"
+#define FW_VERSION "0.4.5"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -78,10 +78,11 @@ static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // manual hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default = leen's schedule as saved on the board on 2026-11-25.
+// Default (leen, 2026-11-25): at least 7 h at 100 % (11:00-18:00), 30 % until
+// 20:30, off by 21:30.
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {420, 4, 1},   {480, 15, 0},  {510, 40, 0},  {600, 100, 0},
-    {960, 100, 0}, {1080, 40, 0}, {1170, 30, 0}, {1260, 0, 1}};
+    {420, 4, 1},    {480, 15, 0},  {510, 40, 0},   {660, 100, 0},
+    {1080, 100, 0}, {1140, 30, 0}, {1230, 30, 0},  {1290, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
