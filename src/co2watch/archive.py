@@ -1,6 +1,6 @@
 """Long-term storage in SQLite: aggregates, plus raw windows around events.
 
-VictoriaMetrics keeps the full-resolution readings for 6 months. What should
+VictoriaMetrics keeps the full-resolution readings for 90 days. What should
 outlive that goes into SQLite, nightly:
 
 * ``agg_hourly``: per UTC hour, robust summaries of hue, net (LED) signal,

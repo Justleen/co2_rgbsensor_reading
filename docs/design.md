@@ -17,7 +17,7 @@ on, LEDs switched through a PCF8574).
 |---|---|
 | Detection | Classical ML only: hard-fault rules, a per-time-of-day robust baseline, then Isolation Forest. A forecaster is only tried if those miss cases. |
 | LLM | Not in the plan. Alerts carry templated reasons written by the detectors. |
-| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1. Retention target 6 months (currently 90 days, see open items); long-term history is kept as aggregates in SQLite. |
+| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1, 90-day retention (final, leen 2026-11-26); long-term history is kept as aggregates in SQLite. |
 | Other storage | SQLite: labels, model registry, calibration events, alert log, cached daily anchors, and the long-term store (hourly/daily aggregates, raw windows around events). |
 | Ingest | The D1 mini serves `/metrics`; VM scrapes it. No Home Assistant, no Influx, no push. The sensor and the aquarium controller share one D1. |
 | Notifications | None for now. Alerts are logged; labelling is done with the CLI or the notebook. |
@@ -37,7 +37,7 @@ flowchart LR
   end
 
   subgraph K3S["k3s cluster"]
-    VM[(VictoriaMetrics<br/>lap1, 6-month target)]
+    VM[(VictoriaMetrics<br/>lap1, 90 days)]
     subgraph ML["co2watch container"]
       SC[scorer<br/>every 5 min]
       TR[trainer<br/>weekly CronJob + on demand]
@@ -78,7 +78,7 @@ this repo's version was kept.
 | Milestone | Contents | Where | Status |
 |---|---|---|---|
 | M0 | Design, simulator, self-calibration, VM/CSV access, label store | this repo | done (this PR + #1) |
-| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisites in the k3s repo: VM retention to 6 months (after growing the volume), VM backup | firmware / k3s repos | next |
+| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisite in the k3s repo: VM backup (retention stays at 90 days) | firmware / k3s repos | next |
 | M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation on simulated data | this repo | done on simulated data (see `docs/detection.md`); evaluation is a CLI command, not a notebook |
 | M3 | Isolation Forest on window features, compared against M2 on simulated and labelled events | this repo | |
 | M4 | Labelling CLI/notebook flow, weekly retraining, model registry and rollback, active-learning list | this repo | |
@@ -187,7 +187,8 @@ hand. Nothing here has been measured on the tank.
 ## 5. Storage
 
 **Retention split (leen, 2026-11-26).** VictoriaMetrics keeps full-resolution
-data for a limited time (target 6 months; until applied it is 90 days). What
+data for 90 days (decided 2026-11-26; 5 years and 6 months were considered and
+dropped, 6 months would not fit the 10 GiB volume). What
 must outlive that goes to SQLite as **aggregates**, written nightly by
 `co2watch archive` (CronJob `co2watch-archive`): hourly and daily summaries of
 the D1 series, plus full-resolution raw windows only around logged alerts and
@@ -329,14 +330,12 @@ opt-in, rate-limited and overridable by hand.
 From the local sessions (2026-11-21 to 11-23), kept here so they don't get lost.
 Nothing in this repo applies anything to the cluster.
 
-1. VM retention: 5 years dropped; **6 months decided** (leen, 2026-11-26), with
-   long-term data kept as SQLite aggregates (section 5). Not applied yet: the
-   disk check (26 Nov) found 334 MB used after ~6 days on a 10 GiB Longhorn
-   volume, so 6 months is estimated at 8-12 GB. Growing the volume (or trimming
-   cluster metrics) comes first. The cluster still runs the VM image as
-   `:latest`; the pin to v1.156.0 is only in an uncommitted local edit. VM data
-   only goes back to 2026-11-21 (earlier data was likely lost during the lap1
-   disk-pressure episode).
+1. VM retention: **stays at 90 days** (leen, 2026-11-26). 5 years and 6 months
+   were considered; 6 months would need 8-12 GB on the 10 GiB volume (334 MB
+   after ~6 days). Long-term history comes from the SQLite aggregates
+   (section 5). The unapplied 5y edit in the k3s repo can be reverted. Still
+   true: the cluster runs the VM image as `:latest` (pin to v1.156.0 only in that
+   local edit), and VM data only goes back to 2026-11-21.
 2. VM backup: Longhorn snapshot/backup, or `vmbackup` to the pi1 backup volume.
 3. DNS: `monitoring.fritz.box` did not resolve from the workstation on 11-21.
    Not investigated.
