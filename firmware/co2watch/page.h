@@ -39,6 +39,17 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div class="row" style="margin-top:10px"><button onclick="act('/read')">Take reading now</button>
 <button onclick="if(confirm('Use the current reading as white? Do this with the sensor on the white backing.'))act('/white?set=1')">Use as white reference</button>
 <button onclick="act('/white?reset=1')">Reset white</button></div>
+<div id="idxbox" style="display:none;margin-top:14px;border-top:1px solid var(--bd);padding-top:10px">
+<div class="row"><b>CO2 index</b><span class="big" id="idxv">-</span></div>
+<div style="position:relative;height:16px;border-radius:8px;margin:6px 0;background:linear-gradient(90deg,#2f6fd6,#2bb3a0,#3cb043,#c8d630,#e8d020)">
+<div id="idxm" style="position:absolute;top:-3px;width:4px;height:22px;margin-left:-2px;background:var(--fg);border-radius:2px;left:0"></div></div>
+<div class="row mut" style="justify-content:space-between;font-size:12px"><span>0 % = low (blue)</span><span>100 % = high</span></div>
+<small id="idxinfo" class="mut"></small>
+<div class="row" style="margin-top:8px"><label>low hue <input type="number" id="idxlo" step="0.1" style="width:5em"></label>
+<label>high hue <input type="number" id="idxhi" step="0.1" style="width:5em"></label><button onclick="idxSave()">Save ends</button></div>
+<div class="row" style="margin-top:6px"><button onclick="act('/api/co2index?low=now')">Set low = now</button>
+<button onclick="act('/api/co2index?high=now')">Set high = now</button><button onclick="act('/api/co2index?reset=1')">Default ends</button></div>
+<small class="mut">Zooms into the drop checker's colour band: the hue (average of the last 3 readings) is mapped so the low end is 0 % and the high end is 100 %. Default ends are the leaflet's 3 and 50 mg/l colours, not calibrated to this sensor: set "low" when the checker is fully blue (early morning, CO2 off) and "high" at the colour you consider too much.</small></div>
 </section>
 <section id="relays" style="display:none"><h2>Relays<span class="badge">preview</span></h2>
 <div class="rl" id="rl"></div>
@@ -165,7 +176,14 @@ function showRelays(r,src){const sec=$('relays');if(!r){sec.style.display='none'
 async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
  try{const r=await fetch('/relay?name='+k+'&on='+(on?1:0),{method:'POST'});if(!r.ok){bad(await r.text());c.checked=!on}else toast(RL[k]+(on?' on':' off'),true)}
  catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
+let idxEdit=0;
+function showIdx(x){const box=$('idxbox');if(!x){box.style.display='none';return}box.style.display='';
+ $('idxv').textContent=x.ok?x.value.toFixed(1)+' %':'-';$('idxm').style.left=Math.max(0,Math.min(100,x.ok?x.value:0))+'%';
+ $('idxinfo').textContent=x.ok?('hue '+x.hue.toFixed(1)+'° (avg of '+x.n+'), low '+x.low.toFixed(1)+'°, high '+x.high.toFixed(1)+'°'+(x.value<0||x.value>100?' — outside the range':'')):'waiting for a reading';
+ if(!idxEdit&&document.activeElement!==$('idxlo')&&document.activeElement!==$('idxhi')){$('idxlo').value=x.low.toFixed(1);$('idxhi').value=x.high.toFixed(1)}}
+function idxSave(){act('/api/co2index?low='+encodeURIComponent($('idxlo').value)+'&high='+encodeURIComponent($('idxhi').value))}
 function show(s){
+ showIdx(s.co2idx);
  showRelays(s.relays,s.relay_src);
  if((s.preview||s.drag)&&!dragOn)initDrag();
  $('ver').textContent='v'+s.version;
