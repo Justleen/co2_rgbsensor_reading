@@ -17,8 +17,8 @@ on, LEDs switched through a PCF8574).
 |---|---|
 | Detection | Classical ML only: hard-fault rules, a per-time-of-day robust baseline, then Isolation Forest. A forecaster is only tried if those miss cases. |
 | LLM | Not in the plan. Alerts carry templated reasons written by the detectors. |
-| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1, 90-day retention (a 5-year retention was considered and dropped on 2026-11-26). |
-| Other storage | SQLite: labels, model registry, calibration events, alert log, cached daily anchors. |
+| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1, 90-day retention (final, leen 2026-11-26); long-term history is kept as aggregates in SQLite. |
+| Other storage | SQLite: labels, model registry, calibration events, alert log, cached daily anchors, and the long-term store (hourly/daily aggregates, raw windows around events). |
 | Ingest | The D1 mini serves `/metrics`; VM scrapes it. No Home Assistant, no Influx, no push. The sensor and the aquarium controller share one D1. |
 | Notifications | None for now. Alerts are logged; labelling is done with the CLI or the notebook. |
 | Illumination | The breakout's two LEDs are switched through a PCF8574 I2C expander. |
@@ -37,7 +37,7 @@ flowchart LR
   end
 
   subgraph K3S["k3s cluster"]
-    VM[(VictoriaMetrics<br/>lap1, 90d retention)]
+    VM[(VictoriaMetrics<br/>lap1, 90 days)]
     subgraph ML["co2watch container"]
       SC[scorer<br/>every 5 min]
       TR[trainer<br/>weekly CronJob + on demand]
@@ -78,7 +78,7 @@ this repo's version was kept.
 | Milestone | Contents | Where | Status |
 |---|---|---|---|
 | M0 | Design, simulator, self-calibration, VM/CSV access, label store | this repo | done (this PR + #1) |
-| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisite in the k3s repo: set up a VM backup (the 5-year retention idea was dropped) | firmware / k3s repos | next |
+| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisite in the k3s repo: VM backup (retention stays at 90 days) | firmware / k3s repos | next |
 | M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation on simulated data | this repo | done on simulated data (see `docs/detection.md`); evaluation is a CLI command, not a notebook |
 | M3 | Isolation Forest on window features, compared against M2 on simulated and labelled events | this repo | |
 | M4 | Labelling CLI/notebook flow, weekly retraining, model registry and rollback, active-learning list | this repo | |
@@ -186,6 +186,15 @@ hand. Nothing here has been measured on the tank.
 
 ## 5. Storage
 
+**Retention split (leen, 2026-11-26).** VictoriaMetrics keeps full-resolution
+data for 90 days (decided 2026-11-26; 5 years and 6 months were considered and
+dropped, 6 months would not fit the 10 GiB volume). What
+must outlive that goes to SQLite as **aggregates**, written nightly by
+`co2watch archive` (CronJob `co2watch-archive`): hourly and daily summaries of
+the D1 series, plus full-resolution raw windows only around logged alerts and
+labels (+/- 6 h). Not every raw reading is copied. Size: roughly 1-2 MB per year
+for the aggregates, plus about 30 kB per archived event.
+
 **VictoriaMetrics (raw data).** Scraped series have no `source` label. Anything
 imported (simulated data, CSV backfill) must carry one (`source="sim"`,
 `source="backfill"`), and the code refuses to import without it. Readers select
@@ -200,6 +209,9 @@ imported (simulated data, CSV backfill) must carry one (`source="sim"`,
 | `anchors` | daily night low and daytime plateau (derived cache) |
 | `alerts` | alert log with score, detector, templated reason |
 | `models` | every trained model, params, metrics, active flag (rollback = switch the flag) |
+| `agg_hourly` | per UTC hour: hue min/p10/median/p90/max, net (LED) signal, stray light median/max, coverage, saturated count, dimmer level, firmware CO2 index, max detection score |
+| `agg_daily` | per local day: night low, peak, swing, time the rise reached 50 % / 90 % of the swing, minutes near the peak, stray light max, CO2 index max, alerts, max score, calibration epoch |
+| `raw_windows`, `raw_samples` | full-resolution two-frame readings around each alert and label (`co2watch archive`; read back with `archive.read_raw_window`) |
 
 **CSV.** `export-csv` writes VM data (both frames + context, UTC and local time);
 `backfill` imports such a CSV into VM under a source label.
@@ -318,12 +330,12 @@ opt-in, rate-limited and overridable by hand.
 From the local sessions (2026-11-21 to 11-23), kept here so they don't get lost.
 Nothing in this repo applies anything to the cluster.
 
-1. ~~Apply the VM manifest (retention 90d to 5y).~~ Dropped (leen, 2026-11-26):
-   VictoriaMetrics stays at 90 days for everything; no second long-term instance.
-   The unapplied manifest edit in the k3s repo can be reverted. Consequence: raw
-   readings older than 90 days are gone, so baselines and evaluations must work
-   within that window (they use 14-16 days), and anything worth keeping longer
-   (labels, alerts, anchors) already lives in SQLite.
+1. VM retention: **stays at 90 days** (leen, 2026-11-26). 5 years and 6 months
+   were considered; 6 months would need 8-12 GB on the 10 GiB volume (334 MB
+   after ~6 days). Long-term history comes from the SQLite aggregates
+   (section 5). The unapplied 5y edit in the k3s repo can be reverted. Still
+   true: the cluster runs the VM image as `:latest` (pin to v1.156.0 only in that
+   local edit), and VM data only goes back to 2026-11-21.
 2. VM backup: Longhorn snapshot/backup, or `vmbackup` to the pi1 backup volume.
 3. DNS: `monitoring.fritz.box` did not resolve from the workstation on 11-21.
    Not investigated.

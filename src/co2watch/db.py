@@ -88,6 +88,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(path), timeout=30.0)
     con.execute("PRAGMA busy_timeout = 30000")
     con.executescript(SCHEMA)
+    from .archive import SCHEMA as ARCHIVE_SCHEMA  # long-term aggregates / raw windows
+    con.executescript(ARCHIVE_SCHEMA)
     return con
 
 

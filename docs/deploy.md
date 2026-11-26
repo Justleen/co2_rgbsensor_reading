@@ -12,6 +12,7 @@ below are for when you decide to.
 | ConfigMap | `co2watch-env` | VM URL, DB path, time zone |
 | Deployment | `co2watch-toolbox` | 1 pod that holds the volume; creates the schema on start (init container); use it for labels, calibration events and `sqlite3` |
 | CronJob | `co2watch-calibrate` | daily 10:30 local: anchors + fit from the last 21 days, saved to SQLite |
+| CronJob | `co2watch-archive` | daily 02:30 local: hourly/daily aggregates and raw windows around alerts/labels into SQLite (long-term store) |
 | CronJob | `co2watch-backup` | daily 03:45 local: consistent SQLite copy, keeps 14 |
 | CronJob | `co2watch-score` | every 5 min (M2): runs detection and logs alerts; **off** by default, enable with `--set jobs.score.enabled=true` once image 0.3.0 is loaded |
 | CronJob | `co2watch-train` | weekly Monday 04:00 (M3/M4), **off** until `co2watch train` exists |
