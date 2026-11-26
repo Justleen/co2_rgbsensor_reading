@@ -39,8 +39,8 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div style="position:relative;height:16px;border-radius:8px;margin:4px 0 6px;background:linear-gradient(90deg,#2f6fd6,#2bb3a0,#3cb043,#c8d630,#e8d020)">
 <div id="idxm" style="position:absolute;top:-3px;width:4px;height:22px;margin-left:-2px;background:var(--fg);border-radius:2px;left:0"></div></div>
 <div class="row mut" style="justify-content:space-between;font-size:12px"><span>0%</span><span>50%</span><span>100%</span></div>
-<div class="row ends" style="margin-top:8px"><label>Low <input type="number" id="idxlo" step="0.1"></label>
-<label>High <input type="number" id="idxhi" step="0.1"></label><button onclick="idxSet()">Set</button></div></div>
+<div class="row ends" style="margin-top:8px"><label>Low % <input type="number" id="idxlo" step="1" value="0"></label>
+<label>High % <input type="number" id="idxhi" step="1" value="100"></label><button onclick="idxSet()">Set</button></div></div>
 </section>
 <section><h2>Light</h2>
 <div class="row"><button onclick="act('/dimmer?level=100')">Set to max</button><button onclick="sch('resume=1')">Run schedule</button></div>
@@ -159,9 +159,17 @@ async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
  catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
 function showIdx(x){const box=$('idxbox');if(!x){box.style.display='none';return}box.style.display='';
  {const e=$('idxv'),p=Math.max(0,Math.min(100,x.ok?x.value:0));e.textContent=x.ok?x.value.toFixed(1)+' %':'-';e.style.left=p+'%';e.style.transform='translateX('+(p<8?'0':p>92?'-100%':'-50%')+')'}$('idxwarn').textContent=x.ok&&(x.value<0||x.value>100)?'outside the range':'';$('idxm').style.left=Math.max(0,Math.min(100,x.ok?x.value:0))+'%';
- for(const[k,v]of[['idxlo',x.low],['idxhi',x.high]]){const e=$(k);if(document.activeElement!==e&&e.dataset.v!=String(v)){e.value=v.toFixed(1);e.dataset.v=v}}
+ idxEnds=[x.low,x.high];
 }
-function idxSet(){act('/api/co2index?low='+encodeURIComponent($('idxlo').value)+'&high='+encodeURIComponent($('idxhi').value))}
+// Low/High are entered in CO2 % of the current scale (0 = current low, 100 = current
+// high; below 0 or above 100 widens it). The board stores the ends as hue, so the
+// page converts: hue = low + pct/100 * (high - low). After saving, the new scale
+// is 0..100 again.
+let idxEnds=null;
+async function idxSet(){if(!idxEnds)return;const lo=+$('idxlo').value,hi=+$('idxhi').value;
+ if(!isFinite(lo)||!isFinite(hi)||lo==hi){bad('Low and High must be numbers and differ');return}
+ const h=p=>(idxEnds[0]+p/100*(idxEnds[1]-idxEnds[0])).toFixed(2);
+ await act('/api/co2index?low='+h(lo)+'&high='+h(hi));$('idxlo').value=0;$('idxhi').value=100}
 function show(s){
  showIdx(s.co2idx);
  showRelays(s.relays,s.relay_src);
