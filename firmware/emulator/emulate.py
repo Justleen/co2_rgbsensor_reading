@@ -41,14 +41,13 @@ TZ = ZoneInfo("Europe/Amsterdam")
 _m = __import__("re").search(r'#define FW_VERSION "([^"]+)"',
                             (PAGE.parent / "co2watch.ino").read_text())
 FW_VERSION = (_m.group(1) if _m else "?") + "-emulator"
-DIM_MIN, DIM_MAX = 0, 100
 SAFE_PCT = 30.0
 OVERRIDE_S = 3600
 # Preview: 100 % from 11:00 to 18:00 (7 h full light, CO2 from 09:00), down to
 # 30 % by 19:00, hold 30 % until 20:30, then fade to 0 % by 21:30.
 # The firmware default still peaks at 10:00.
 SCHED_DEFAULT = [[420, 4, 1], [540, 18, 0], [590, 40, 0], [660, 100, 0],
-                 [1080, 100, 0], [1110, 40, 0], [1195, 25, 0], [1290, 0, 1]]
+                 [1080, 100, 0], [1110, 40, 0], [1195, 25, 0], [1260, 0, 1]]
 ATIME, GAIN = 0xC0, 4
 MAX_COUNT = min((256 - ATIME) * 1024, 65535)
 
@@ -64,16 +63,13 @@ class Board:
         self.off = [0, 0, 0, 0]
         self.on = [0, 0, 0, 0]
         self.wb = [1.0, 1.0, 1.0]
-        self.dim_pct = 0          # last manual level
         self.dim_out = 0.0        # actual output
-        self.dim_changes = 0
         self.sched = [p[:] for p in SCHED_DEFAULT]
-        self.sched_en = True   # always on, as on the D1
         self.maxh = 7.0   # preview: max hours at 100 % (page enforces it)
         self.override_until = None
-        self.source = "manual"
+        self.source = "safe"
         self.posts = 0
-        self.idx_low, self.idx_high = 203.0, 153.5   # CO2 index ends (firmware defaults)
+        self.idx_low, self.idx_high = 203.0, 69.0   # CO2 index ends (firmware defaults)
         self.hue_hist = []
         # Relay preview (mockup only; the firmware has no relay code yet).
         self.relays = {"co2": True, "air": False, "heat": False, "pump": True}
@@ -144,15 +140,13 @@ class Board:
 
     # --- dimmer / schedule (mirrors co2watch.ino) --------------------------
     def set_output(self, pct):
-        self.dim_out = round(float(min(max(pct, DIM_MIN), DIM_MAX)), 1)
+        self.dim_out = round(float(min(max(pct, 0), 100)), 1)
 
     def manual(self, pct):
-        self.dim_pct = int(min(max(pct, DIM_MIN), DIM_MAX))
-        self.set_output(self.dim_pct)
-        self.dim_changes += 1
-        if self.sched_en:
-            self.override_until = time.monotonic() + OVERRIDE_S
-            self.source = "override"
+        """Hold a level for 1 hour ("Set to max"), then the schedule resumes."""
+        self.set_output(pct)
+        self.override_until = time.monotonic() + OVERRIDE_S
+        self.source = "override"
 
     def sched_level(self, m):
         p = self.sched
@@ -189,10 +183,6 @@ class Board:
     def tick_relays(self):
         now = time.monotonic()
         for k in ("co2", "air"):
-            if not self.sched_en:
-                self.relay_override.pop(k, None)
-                self.relay_src[k] = "manual"
-                continue
             if k in self.relay_override:
                 if now < self.relay_override[k]:
                     self.relay_src[k] = "override"
@@ -221,10 +211,6 @@ class Board:
 
     def tick(self):
         self.tick_relays()
-        if not self.sched_en:
-            self.override_until = None
-            self.source = "manual"
-            return
         if self.override_until is not None:
             if time.monotonic() < self.override_until:
                 return
@@ -250,11 +236,9 @@ class Board:
             "version": FW_VERSION, "seq": self.seq,
             "age": int(time.monotonic() - self.read_at), "saturated": False,
             "i2c_errors": 0,
-            "off": [self.off[0], self.off[1], self.off[2], self.off[3]],
-            "on": [self.on[0], self.on[1], self.on[2], self.on[3]],
-            "colour": self.colour(), "wb": [round(w, 4) for w in self.wb],
-            "dim": {"level": self.dim_out, "min": DIM_MIN, "max": DIM_MAX,
-                    "source": self.source, "override_left": self.override_left()},
+            "colour": {k: v for k, v in self.colour().items() if k in ("ok", "hex", "hue")},
+            "dim": {"level": self.dim_out, "source": self.source,
+                    "override_left": self.override_left()},
             "time_valid": valid, "time": t.strftime("%H:%M:%S") if valid else "",
             "minute": round(self.minute(), 2) if valid else 0,
             "relays": dict(self.relays), "relay_src": dict(self.relay_src),
@@ -264,15 +248,15 @@ class Board:
 
     def co2idx(self):
         if not self.hue_hist:
-            return {"ok": False, "value": 0, "hue": 0, "n": 0, "low": self.idx_low,
+            return {"ok": False, "value": 0, "hue": 0, "low": self.idx_low,
                     "high": self.idx_high}
         h = sum(self.hue_hist) / len(self.hue_hist)
         v = (self.idx_low - h) / (self.idx_low - self.idx_high) * 100
         return {"ok": True, "value": round(v, 1), "hue": round(h, 1),
-                "n": len(self.hue_hist), "low": self.idx_low, "high": self.idx_high}
+                "low": self.idx_low, "high": self.idx_high}
 
     def schedule(self):
-        return {"en": self.sched_en, "pts": self.sched, "maxh": self.maxh}
+        return {"pts": self.sched, "maxh": self.maxh}
 
     def metrics(self):
         self.tick()
@@ -295,13 +279,8 @@ class Board:
             "# TYPE tcs34725_i2c_errors_total counter", "tcs34725_i2c_errors_total 0",
             "co2watch_pcf8574_present 1",
             f"aquarium_light_dim_percent {self.dim_out:.1f}",
-            f"aquarium_light_schedule_enabled {int(self.sched_en)}",
             f"aquarium_light_override_active {int(self.override_until is not None)}",
             f"co2watch_time_valid {int(self.time_valid())}",
-            f"aquarium_light_dim_min_percent {DIM_MIN}",
-            f"aquarium_light_dim_max_percent {DIM_MAX}",
-            "# TYPE aquarium_light_dim_changes_total counter",
-            f"aquarium_light_dim_changes_total {self.dim_changes}",
             f'co2watch_build_info{{version="{FW_VERSION}"}} 1',
             f"co2watch_uptime_seconds {int(time.monotonic() - self.boot)}",
             "co2watch_wifi_rssi_dbm -60",
@@ -374,7 +353,7 @@ def make_handler(board):
                         return
                     board.manual(int(v))
                 board.tick()
-                self.j({"level": board.dim_out, "min": DIM_MIN, "max": DIM_MAX,
+                self.j({"level": board.dim_out,
                         "source": board.source})
             elif u.path == "/white":
                 if "reset" in q:
@@ -411,7 +390,7 @@ def make_handler(board):
                         else:
                             hi = x
                 if "reset" in q:
-                    lo, hi = 203.0, 153.5
+                    lo, hi = 203.0, 69.0
                 if abs(lo - hi) < 1:
                     self.send(400, "low and high hue must differ\n", "text/plain")
                     return
@@ -429,7 +408,7 @@ def make_handler(board):
                                   "text/plain")
                         return
                     board.relays[name] = q["on"] == "1"
-                    if board.sched_en and name in ("co2", "air"):
+                    if name in ("co2", "air"):
                         board.relay_override[name] = time.monotonic() + OVERRIDE_S
                 board.tick()
                 self.j(board.relays)
@@ -442,10 +421,6 @@ def make_handler(board):
                         self.send(400, err, "text/plain")
                         return
                     board.sched = pts
-                if "en" in q:
-                    board.sched_en = True   # the schedule always runs (as on the D1)
-                    board.override_until = None
-                    board.relay_override.clear()
                 if "resume" in q:
                     board.override_until = None
                     board.relay_override.clear()

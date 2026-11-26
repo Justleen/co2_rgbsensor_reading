@@ -12,19 +12,21 @@ drop checker and drives the light dimmer.
   ATIME (0xC0, 154 ms) are fixed constants.
 - Serves `/metrics` (Prometheus text, scraped by VictoriaMetrics job `co2watch`)
   with the names from `docs/design.md` section 4, plus `tcs34725_hue_degrees`,
-  `aquarium_light_dim_*` and `co2watch_build_info`.
+  `co2watch_co2_index_*`, `aquarium_light_dim_percent`,
+  `aquarium_light_override_active` and `co2watch_build_info`.
 - Serves a web page on `/`: drop-checker colour (net = on - off, white
-  balanced, as swatch, hex and hue), raw counts, and a dimmer slider.
+  balanced, as hex and a colour bar), the CO2 index, the light buttons and the schedule editor.
   White balance is display-only; `/metrics` keeps the raw counts.
-- Dimmer: D6 (GPIO12), 1 kHz PWM into a PWM-to-0-10V board, then the LCM-40
-  DIM input. Manual only (`/dimmer?level=NN`, the page, or serial `dNN`),
-  clamped to `DIM_MIN_PCT`..`DIM_MAX_PCT` (compile-time). The last level is
-  stored in flash and restored at boot. During a reset D6 is low, so the light
-  drops to its minimum for about a second.
+- Light: D6 (GPIO12), 1 kHz PWM (0.1 % = 10 mV steps) into a PWM-to-0-10V board,
+  then the LCM-40 DIM input. "Set to max" (`/dimmer?level=100`) holds 100 % for
+  1 hour, "Run schedule" (`/api/schedule?resume=1`) returns at once. During a
+  reset D6 is low, so the light drops to its minimum for about a second.
+- Settings (schedule, hours at 100 %, white balance, CO2 index ends) are one
+  struct in EEPROM with a version byte; a blank, corrupt or older layout falls
+  back to the defaults in the sketch.
 
-- Light schedule (always on after a boot; switching it off on the page lasts until
-  the next reboot; default: 4 % at 07:00, 18 % at 09:00, 40 % at 09:50, 100 % from 11:00 to 18:00,
-  40 % at 18:30, 25 % at 19:55, off by 21:30): 8 points (24-hour HH:MM +
+- Light schedule (always runs; default: 4 % at 07:00, 18 % at 09:00, 40 % at 09:50, 100 % from 11:00 to 18:00,
+  40 % at 18:30, 25 % at 19:55, off by 21:00): 8 points (24-hour HH:MM +
   level), each fading to the next one (smooth cosine, linear or step), wrapping
   at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).
   A manual change pauses the schedule for 1 hour; without a valid time the
@@ -33,7 +35,7 @@ drop checker and drives the light dimmer.
 - CO2 index (v0.6.0): zooms into the drop checker's colour band. The hue
   (average of the last 3 readings) is mapped so a "low" hue = 0 % and a "high"
   hue = 100 % (`co2watch_co2_index_percent`, not clamped). Default ends are
-  203 deg (leaflet 3 mg/l) and 153.5 deg (set on the D1 on 2026-11-26), not yet
+  203 deg (leaflet 3 mg/l) and 69 deg (set on the D1 on 2026-11-26), not yet
   calibrated over a full day: set the ends on the page ("Set low = now" when the checker is fully
   blue). Ends stored in flash; API `/api/co2index?low=&high=` (deg or `now`).
   Raw counts are unchanged.
