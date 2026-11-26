@@ -91,3 +91,20 @@ def test_http_server_smoke(tmp_path, sim):
     assert "api/status" in page
     st = json.loads(urllib.request.urlopen(base + "/api/status", timeout=60).read())
     assert st["latest"]["age_min"] == 5 and st["series"]["t"]
+
+
+def test_score_once_logs_alerts_records_run_and_builds_status(tmp_path, sim):
+    from co2watch.web import score_once
+    path = str(tmp_path / "t.sqlite")
+    raw = sim.readings
+    stuck_end = pd.Timestamp(sim.labels.query("kind == 'stuck'")["end"].iloc[0])
+    now = stuck_end + pd.Timedelta(minutes=30)
+    ok, msg, st = score_once(path, lambda: (raw, now, []))
+    assert ok and "new alert" in msg
+    json.dumps(st, allow_nan=False)
+    con = db.connect(path)
+    assert "stuck" in set(db.read_alerts(con)["kind"])
+    assert {j["job"]: j for j in st["jobs"]}["score"]["state"] == "ok"
+    ok, msg, _ = score_once(path, lambda: (None, now, ["VM down"]))
+    assert not ok and msg == "VM down"
+    assert db.last_job_runs(con)[-1]["fails_since_ok"] == 1

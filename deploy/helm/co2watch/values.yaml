@@ -80,6 +80,10 @@ web:
   enabled: true
   port: 8080
   cacheSeconds: 120
+  # The same process also runs detection every N seconds and logs alerts
+  # (what the score CronJob below would do, without starting a pod each time).
+  # 0 = off. Keep jobs.score disabled while this is on.
+  scoreEverySeconds: 300
   service:
     type: NodePort       # or ClusterIP behind your own ingress
     nodePort: 30880
@@ -119,7 +123,8 @@ jobs:
     schedule: "45 3 * * *"
     args: ["backup", "--db", "$(DB)", "--dir", "$(BACKUP_DIR)", "--keep", "14"]
   # M2: score the last 16 days every 5 minutes and log alerts (docs/detection.md).
-  # Off by default; needs image 0.3.0 or later.
+  # Off: the toolbox's score loop (web.scoreEverySeconds) does this now. Only
+  # enable it with web.enabled=false or web.scoreEverySeconds=0.
   score:
     enabled: false
     schedule: "*/5 * * * *"

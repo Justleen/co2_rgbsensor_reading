@@ -8,8 +8,10 @@ page polls:
 * ``GET /api/status``   everything the page shows (see ``build_status``)
 * ``GET /healthz``      "ok" (for a liveness probe)
 
-The JSON is recomputed at most every ``cache_s`` seconds, whatever the number
-of open browsers, so the cost on lap1 is one VictoriaMetrics read plus one
+With ``--score-every N`` the same process also runs the score job every N
+seconds (instead of a CronJob that starts a fresh Python every 5 minutes) and
+the page shows that result. Otherwise the JSON is recomputed at most every
+``cache_s`` seconds, whatever the number of open browsers, so the cost on lap1 is one VictoriaMetrics read plus one
 detection pass every couple of minutes while someone is looking, and nothing
 when nobody is. The page is read-only: it never writes labels or alerts.
 """
@@ -68,12 +70,15 @@ def _light(df: pd.DataFrame) -> list:
 
 
 def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
-                 window_h: float = 48, errors: list[str] | None = None) -> dict:
+                 window_h: float = 48, errors: list[str] | None = None,
+                 prepared=None) -> dict:
     """Everything the status page shows, as plain JSON-able data.
 
     ``raw`` is the reading frame (vm.read_all / frames_from_csv), ideally 16
     days so the per-slot normal band has its 14 days of history. ``con`` is
     the SQLite connection (alerts, job runs, daily aggregates).
+    ``prepared`` = (features.prepare frame, detect.Detection) when the caller
+    already ran detection on ``raw`` (the score loop), so it is not run twice.
     """
     from .calibration import band_for_chart_hue, extract_daily_anchors, fit_calibration
     from .detect import DetectConfig, detect
@@ -88,9 +93,12 @@ def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
         raw = raw[raw.index < now]
     if raw is not None and len(raw):
         try:
-            df = prepare(raw)
             cfg = DetectConfig()
-            det = detect(df, cfg, events)
+            if prepared is not None:
+                df, det = prepared
+            else:
+                df = prepare(raw)
+                det = detect(df, cfg, events)
             s = det.scores
             fit = None
             try:
@@ -211,6 +219,11 @@ class _Cache:
         self.lock = threading.Lock()
         self.at, self.body = 0.0, b""
 
+    def put(self, status: dict) -> None:
+        body = json.dumps(status, separators=(",", ":")).encode()
+        with self.lock:
+            self.body, self.at = body, time.monotonic()
+
     def get(self) -> bytes:
         with self.lock:  # one computation at a time; others wait and reuse it
             if time.monotonic() - self.at > self.ttl or not self.body:
@@ -239,9 +252,56 @@ def make_loader(vm_url: str | None, source: str | None, csv: str | None, history
     return load
 
 
+def score_once(db_path: str, load, since_hours: float = 2.0) -> tuple[bool, str, dict]:
+    """One pass of the score loop: load readings, run detection, log alerts
+    (exactly like ``co2watch score``), record it in job_runs and return the
+    page status built from the same detection."""
+    from .detect import DetectConfig, detect, log_alerts
+    from .features import prepare
+    con = db.connect(db_path)
+    run = db.job_started(con, "score")
+    try:
+        raw, now, errors = load()
+        if raw is not None and len(raw):
+            raw = raw[raw.index < now]
+        if errors or raw is None or raw.empty:
+            msg = errors[0] if errors else "no readings in the selected window"
+            db.job_finished(con, run, False, msg)
+            return False, msg, build_status(con, raw, now, errors=errors)
+        df = prepare(raw)
+        events = [e for e in db.calibration_events(con) if e <= now]
+        det = detect(df, DetectConfig(), events)
+        logged = log_alerts(con, det, now, since_hours)
+        new = sum(created for _, created, _ in logged)
+        msg = (f"scored up to {df.index[-1].tz_convert(TZ):%Y-%m-%d %H:%M}; latest score "
+               f"{det.scores['score'].iloc[-1]:.2f}; {new} new alert(s)")
+        db.job_finished(con, run, True, msg)
+        return True, msg, build_status(con, raw, now, prepared=(df, det))
+    except Exception as e:
+        db.job_finished(con, run, False, f"{type(e).__name__}: {e}")
+        raise
+    finally:
+        con.close()
+
+
+def _score_loop(db_path: str, load, every_s: float, cache: _Cache) -> None:
+    while True:
+        t0 = time.monotonic()
+        try:
+            ok, msg, status = score_once(db_path, load)
+            cache.put(status)
+            print(f"score: {msg}", flush=True)
+        except Exception as e:  # keep looping; the failure is in job_runs
+            print(f"score failed: {type(e).__name__}: {e}", flush=True)
+        time.sleep(max(5.0, every_s - (time.monotonic() - t0)))
+
+
 def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
           source: str | None = None, csv: str | None = None, cache_s: float = 120,
-          history_days: float = 16) -> None:
+          history_days: float = 16, score_every_s: float = 0) -> None:
+    """Serve the page. With ``score_every_s`` > 0 a background thread also runs
+    the score job every that many seconds (replacing the score CronJob), and the
+    page shows that thread's latest result instead of computing its own."""
     page = resources.files("co2watch").joinpath("static/status.html").read_bytes()
     load = make_loader(vm_url, source, csv, history_days)
 
@@ -253,7 +313,12 @@ def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
         finally:
             con.close()
 
-    cache = _Cache(compute, cache_s)
+    # With the score loop the loop keeps the cache fresh; the page only computes
+    # by itself if the loop has not delivered for two rounds.
+    cache = _Cache(compute, max(cache_s, 2 * score_every_s + 60) if score_every_s else cache_s)
+    if score_every_s:
+        threading.Thread(target=_score_loop, args=(db_path, load, score_every_s, cache),
+                         daemon=True, name="score-loop").start()
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body: bytes, ctype: str):
@@ -286,7 +351,8 @@ def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
 
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"co2watch status page on http://{host}:{port}/ "
-          f"(data: {'csv ' + csv if csv else vm_url or 'SQLite only'})", flush=True)
+          f"(data: {'csv ' + csv if csv else vm_url or 'SQLite only'}"
+          f"{f'; scoring every {score_every_s:g} s' if score_every_s else ''})", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

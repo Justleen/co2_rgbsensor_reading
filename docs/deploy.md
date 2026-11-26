@@ -15,7 +15,7 @@ below are for when you decide to.
 | CronJob | `co2watch-calibrate` | daily 10:30 local: anchors + fit from the last 21 days, saved to SQLite |
 | CronJob | `co2watch-archive` | daily 02:30 local: hourly/daily aggregates and raw windows around alerts/labels into SQLite (long-term store) |
 | CronJob | `co2watch-backup` | daily 03:45 local: consistent SQLite copy, keeps 14 |
-| CronJob | `co2watch-score` | every 5 min (M2): runs detection and logs alerts; **off** by default, enable with `--set jobs.score.enabled=true` once image 0.3.0 is loaded |
+| CronJob | `co2watch-score` | every 5 min (M2): runs detection and logs alerts; **off**, because the toolbox's score loop (`web.scoreEverySeconds: 300`) does the same without starting a pod each time |
 | CronJob | `co2watch-train` | weekly Monday 04:00 (M3/M4), **off** until `co2watch train` exists |
 
 ```mermaid
@@ -129,7 +129,11 @@ reasons, the last run of every job and the daily shape from the archive.
 * Job status comes from the `job_runs` table: every `calibrate`, `score`,
   `archive` and `backup` run records its start, end, result and a one-line
   summary. A daily job without a success for 36 h shows as late.
-* It never writes alerts or labels. Turn it off with `--set web.enabled=false`
+* With `web.scoreEverySeconds` (default 300) the same process is also the
+  scorer: every 5 minutes it runs detection, logs alerts and records a `score`
+  job run, and the page shows that result. A hung loop shows as a late `score`
+  job on the page.
+* The page itself never writes labels. Turn it off with `--set web.enabled=false`
   (the toolbox then just sleeps, as before),
   or use `web.service.type=ClusterIP` behind your own ingress.
 

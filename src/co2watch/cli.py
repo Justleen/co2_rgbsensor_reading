@@ -12,6 +12,7 @@ Commands
   label             store a label for a time window (normal, real_problem, ...)
   mark-calibration  record a fluid change / sensor move
   score             M2 detection (rules, baseline, daily summaries); logs alerts
+  serve             status web page; optionally also the score loop (--score-every)
   alerts            list logged alerts
   archive           nightly long-term store: hourly/daily aggregates and raw
                     windows around alerts and labels
@@ -105,7 +106,7 @@ def _cmd_calibrate(a):
 
 
 def _cmd_score(a):
-    from .detect import DetectConfig, detect
+    from .detect import DetectConfig, detect, log_alerts
     con = db.connect(a.db)
     raw = _load(a)
     if a.now:  # replay: pretend later data does not exist yet
@@ -117,15 +118,9 @@ def _cmd_score(a):
     events = db.calibration_events(con)
     det = detect(df, DetectConfig(threshold=a.threshold), events)
     now = _local(a.now) if a.now else df.index[-1] + pd.Timedelta(minutes=5)
-    since = now - pd.Timedelta(hours=a.since_hours)
-    new = 0
-    for _, al in det.alerts.iterrows():
-        if al["end"] < since or al["known_at"] > now:
-            continue
-        i, created = db.upsert_alert(con, al["start"], al["end"], al["score"], al["kind"],
-                                     al["reason"], model_version="m2-rules-baseline",
-                                     details=al["details"])
-        new += created
+    logged = log_alerts(con, det, now, a.since_hours)
+    new = sum(created for _, created, _ in logged)
+    for i, created, al in logged:
         print(f"{'NEW ' if created else 'open'} #{i} [{al['kind']}] score {al['score']:.2f}: "
               f"{al['reason']}")
     last = det.scores.iloc[-1]
@@ -219,7 +214,7 @@ def _cmd_mark(a):
 def _cmd_serve(a):
     from .web import serve
     serve(a.host, a.port, a.db, vm_url=a.vm, source=a.source, csv=a.csv,
-          cache_s=a.cache_seconds, history_days=a.days)
+          cache_s=a.cache_seconds, history_days=a.days, score_every_s=a.score_every)
 
 
 # Scheduled commands whose runs are recorded in job_runs (shown on the status page).
@@ -339,6 +334,9 @@ def main(argv=None):
                    help="history read for the normal band (needs 14+ days)")
     s.add_argument("--cache-seconds", type=float, default=120,
                    help="recompute the page data at most this often")
+    s.add_argument("--score-every", type=float, default=0, metavar="SECONDS",
+                   help="also run detection every N seconds and log alerts, like the "
+                        "score CronJob (0 = off); the page then reuses that result")
     s.set_defaults(func=_cmd_serve)
 
     a = p.parse_args(argv)

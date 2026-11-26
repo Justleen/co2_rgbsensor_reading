@@ -330,6 +330,27 @@ def detect(df: pd.DataFrame, cfg: DetectConfig | None = None,
     return Detection(scores=s, alerts=alerts, daily=summ)
 
 
+MODEL_VERSION = "m2-rules-baseline"
+
+
+def log_alerts(con, det: "Detection", now: pd.Timestamp, since_hours: float = 2.0
+               ) -> list[tuple[int, bool, pd.Series]]:
+    """Write the alerts that were active in the last ``since_hours`` (and already
+    known at ``now``) to the SQLite alert log, merging into open ones.
+    Returns (alert id, created, alert row) per logged alert."""
+    from . import db
+    since = now - pd.Timedelta(hours=since_hours)
+    out = []
+    for _, al in det.alerts.iterrows():
+        if al["end"] < since or al["known_at"] > now:
+            continue
+        i, created = db.upsert_alert(con, al["start"], al["end"], al["score"], al["kind"],
+                                     al["reason"], model_version=MODEL_VERSION,
+                                     details=al["details"])
+        out.append((i, created, al))
+    return out
+
+
 def _make_alerts(s: pd.DataFrame, df: pd.DataFrame, cfg: DetectConfig) -> pd.DataFrame:
     rows = []
     above = s["score"] >= cfg.threshold

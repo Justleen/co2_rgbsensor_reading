@@ -36,7 +36,8 @@ spec:
           # into it works as before. Readiness only, no liveness probe, so a slow
           # page never restarts the pod under an open exec session.
           args: ["serve", "--db", "$(DB)", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)",
-                 "--port", "{{ .Values.web.port }}", "--cache-seconds", "{{ .Values.web.cacheSeconds }}"]
+                 "--port", "{{ .Values.web.port }}", "--cache-seconds", "{{ .Values.web.cacheSeconds }}",
+                 "--score-every", "{{ .Values.web.scoreEverySeconds }}"]
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
