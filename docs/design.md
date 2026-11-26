@@ -82,7 +82,7 @@ this repo's version was kept.
 | M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation notebook on simulated data | this repo | |
 | M3 | Isolation Forest on window features, compared against M2 on simulated and labelled events | this repo | |
 | M4 | Labelling CLI/notebook flow, weekly retraining, model registry and rollback, active-learning list | this repo | |
-| M5 | Container image + Helm chart: namespace, SQLite PVC, toolbox, CronJobs (see `docs/deploy.md`) | this repo | chart written; score/train jobs switched off until M2-M4 |
+| M5 | Container image + Helm chart: namespace, SQLite PVC, toolbox, CronJobs (see `docs/deploy.md`) | this repo | installed on k3s (lap1) 2026-11-25, Helm rev 1, image 0.2.0; calibrate and backup jobs running; score/train jobs switched off until M2-M4 |
 | M6 | Evaluate on 2+ weeks of real data, tune thresholds; decide on notifications | this repo | |
 
 ## 4. The `/metrics` contract (needed for M1)
@@ -345,3 +345,9 @@ Nothing in this repo applies anything to the cluster.
    the D1 hands the event to the SQLite/ML side (e.g. a `co2watch_calibration_event`
    counter in `/metrics` that a CronJob turns into a row), and whether it should
    also reset the Low/High ends to "learning" automatically.
+9. **Current data is throwaway (leen 2026-11-26).** The readings collected so
+   far come from a temporary hardware setup and are not used for training,
+   baselines or evaluation. A new data set starts once the setup is permanent
+   (sensor on a protoboard, fixed sensor position): log a calibration event at
+   that moment, freeze gain and ATIME, and run the 1-2 week cold start from
+   there. Until then, test the detectors on simulated data only.
