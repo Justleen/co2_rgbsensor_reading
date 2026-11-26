@@ -184,6 +184,11 @@ hand. Nothing here has been measured on the tank.
 * LEDs on only during readings also limits heat near the checker and LED ageing;
   LED ageing is itself a slow-drift source to watch.
 
+**Status page instead of Grafana (leen, 2026-11-26).** There is too little to
+show for a Grafana stack on lap1. `co2watch serve` (Deployment `co2watch-web`)
+serves one plain HTML/JS page in the style of the D1's page, read-only, from
+SQLite plus a cached VictoriaMetrics read. See `docs/deploy.md`.
+
 ## 5. Storage
 
 **Retention split (leen, 2026-11-26).** VictoriaMetrics keeps full-resolution
@@ -208,6 +213,7 @@ imported (simulated data, CSV backfill) must carry one (`source="sim"`,
 | `calibration_events` | fluid replaced, sensor moved: starts a fresh baseline |
 | `anchors` | daily night low and daytime plateau (derived cache) |
 | `alerts` | alert log with score, detector, templated reason |
+| `job_runs` | each run of calibrate / score / archive / backup: start, end, ok, one-line summary (shown on the status page; newest 200 per job kept) |
 | `models` | every trained model, params, metrics, active flag (rollback = switch the flag) |
 | `agg_hourly` | per UTC hour: hue min/p10/median/p90/max, net (LED) signal, stray light median/max, coverage, saturated count, dimmer level, firmware CO2 index, max detection score |
 | `agg_daily` | per local day: night low, peak, swing, time the rise reached 50 % / 90 % of the swing, minutes near the peak, stray light max, CO2 index max, alerts, max score, calibration epoch |

@@ -1,7 +1,7 @@
 apiVersion: v2
 name: co2watch
-description: Anomaly detection for an aquarium CO2 drop checker (SQLite store, toolbox, CronJobs)
+description: Anomaly detection for an aquarium CO2 drop checker (SQLite store, toolbox, CronJobs, status page)
 type: application
-version: 0.2.0
-appVersion: "0.3.0"
+version: 0.3.0
+appVersion: "0.4.0"
 kubeVersion: ">=1.27.0-0"   # CronJob timeZone field

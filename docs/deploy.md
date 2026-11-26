@@ -11,6 +11,7 @@ below are for when you decide to.
 | PersistentVolumeClaim | `co2watch-data` | RWO volume holding `/data/co2watch.sqlite` and `/data/backups/`; kept on uninstall |
 | ConfigMap | `co2watch-env` | VM URL, DB path, time zone |
 | Deployment | `co2watch-toolbox` | 1 pod that holds the volume; creates the schema on start (init container); use it for labels, calibration events and `sqlite3` |
+| Deployment + Service | `co2watch-web` | status page (`co2watch serve`), NodePort 30880: `http://<node IP>:30880/`. Read-only; needs image 0.4.0+ |
 | CronJob | `co2watch-calibrate` | daily 10:30 local: anchors + fit from the last 21 days, saved to SQLite |
 | CronJob | `co2watch-archive` | daily 02:30 local: hourly/daily aggregates and raw windows around alerts/labels into SQLite (long-term store) |
 | CronJob | `co2watch-backup` | daily 03:45 local: consistent SQLite copy, keeps 14 |
@@ -23,6 +24,7 @@ flowchart LR
     VM[(VictoriaMetrics<br/>monitoring ns)]
     subgraph ns["namespace co2watch"]
       TB[toolbox pod<br/>kubectl exec]
+      WEB[web pod<br/>status page]
       CAL[CronJob calibrate]
       BK[CronJob backup]
       SC[CronJob score<br/>M2]
@@ -30,8 +32,8 @@ flowchart LR
       PVC[(PVC co2watch-data<br/>SQLite file)]
     end
   end
-  VM --> CAL & SC & TR
-  TB & CAL & BK & SC & TR --- PVC
+  VM --> CAL & SC & TR & WEB
+  TB & CAL & BK & SC & TR & WEB --- PVC
 ```
 
 ## Why there is no "SQLite server"
@@ -111,3 +113,21 @@ backup decision (Longhorn backup, or a copy to the pi1 backup volume); copying
 | `database is locked` after 30 s | a long job holds the write lock; check overlapping manual jobs |
 | calibrate job fails with connection refused | `vm.url` wrong; test from the toolbox: `python -c "import urllib.request;print(urllib.request.urlopen('$VM_URL/health').read())"` |
 | CronJob ignores time zone | k3s older than 1.27; upgrade, or write schedules in UTC |
+
+## Status page
+
+`co2watch-web` serves one page on NodePort 30880 (`http://lap1.fritz.box:30880/`,
+or any node IP). It shows the estimated CO2 now, the last 48 h of the drop
+checker against the learned per-time-of-day normal band, the alert log with
+reasons, the last run of every job and the daily shape from the archive.
+
+* Cost: the JSON behind it is recomputed at most every 120 s
+  (`web.cacheSeconds`) and only while a browser has the page open (it polls
+  once a minute). Each recompute reads 16 days from VictoriaMetrics and runs
+  detection once; the pod idles at well under 128 Mi.
+* Job status comes from the `job_runs` table: every `calibrate`, `score`,
+  `archive` and `backup` run records its start, end, result and a one-line
+  summary. A daily job without a success for 36 h shows as late.
+* It never writes alerts or labels. Turn it off with `--set web.enabled=false`,
+  or use `web.service.type=ClusterIP` behind your own ingress.
+

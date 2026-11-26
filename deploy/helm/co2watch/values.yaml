@@ -70,6 +70,23 @@ toolbox:
     requests: {cpu: 10m, memory: 32Mi}
     limits: {memory: 256Mi}
 
+# --- Status page ----------------------------------------------------------------
+# `co2watch serve`: one small page with the drop checker over the last 48 h and
+# its learned normal band, alerts with their reasons, job runs and the daily
+# shape. Read-only; recomputes at most every cacheSeconds while someone looks.
+# On the LAN at http://<any node IP>:<nodePort>/ (NodePort; k3s also serves it
+# on every node). Needs image 0.4.0+.
+web:
+  enabled: true
+  port: 8080
+  cacheSeconds: 120
+  service:
+    type: NodePort       # or ClusterIP behind your own ingress
+    nodePort: 30880
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
 # --- Scheduled jobs -------------------------------------------------------------
 # Each entry becomes a CronJob. Schedules are in `timezone`.
 # $(VM_URL), $(VM_SOURCE) and $(DB) are filled in from the pod environment.

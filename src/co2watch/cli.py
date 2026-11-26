@@ -100,6 +100,8 @@ def _cmd_calibrate(a):
     if len(valid):
         print(f"typical daily peak: {fit.describe(valid['plateau_hue'].tail(7).median())}")
         print(f"typical night low : {fit.describe(valid['night_hue'].tail(7).median())}")
+    return (f"{len(valid)} of {len(anchors)} days valid; fit {fit.status} "
+            f"(a={fit.a:.1f}, b={fit.b:.2f}); drift {drift.get('pattern', 'n/a')}")
 
 
 def _cmd_score(a):
@@ -111,7 +113,7 @@ def _cmd_score(a):
     df = prepare(raw, a.saturation)
     if df.empty:
         print("no readings in the selected window")
-        return
+        return "no readings in the selected window"
     events = db.calibration_events(con)
     det = detect(df, DetectConfig(threshold=a.threshold), events)
     now = _local(a.now) if a.now else df.index[-1] + pd.Timedelta(minutes=5)
@@ -127,8 +129,10 @@ def _cmd_score(a):
         print(f"{'NEW ' if created else 'open'} #{i} [{al['kind']}] score {al['score']:.2f}: "
               f"{al['reason']}")
     last = det.scores.iloc[-1]
-    print(f"scored {len(df)} slots up to {df.index[-1].tz_convert(TZ):%Y-%m-%d %H:%M}; "
-          f"latest score {last['score']:.2f}; {new} new alert(s)")
+    msg = (f"scored {len(df)} slots up to {df.index[-1].tz_convert(TZ):%Y-%m-%d %H:%M}; "
+           f"latest score {last['score']:.2f}; {new} new alert(s)")
+    print(msg)
+    return msg
 
 
 def _cmd_archive(a):
@@ -148,6 +152,7 @@ def _cmd_archive(a):
     nd = archive.save_daily(con, archive.daily(keep, db.read_alerts(con), events, score)) \
         if len(keep) else 0
     print(f"aggregates: {nh} hours, {nd} days (complete local days since {first:%Y-%m-%d})")
+    nw = 0
     for source, s, e in archive.event_windows(con, a.pad_hours):
         if e > now:
             continue  # window not finished yet; archived on a later run
@@ -160,8 +165,10 @@ def _cmd_archive(a):
             print(f"raw window {source}: no data left in the source (older than retention?)")
             continue
         n = archive.save_raw_window(con, source, frames)
+        nw += 1
         print(f"raw window {source}: {n} samples {s.tz_convert(TZ):%Y-%m-%d %H:%M} .. "
               f"{e.tz_convert(TZ):%Y-%m-%d %H:%M}")
+    return f"{nh} hours, {nd} days aggregated; {nw} raw window(s) stored"
 
 
 def _cmd_alerts(a):
@@ -192,7 +199,9 @@ def _cmd_label(a):
 
 def _cmd_backup(a):
     con = db.connect(a.db)
-    print(f"backup written to {db.backup(con, a.dir, a.keep)}")
+    dest = db.backup(con, a.dir, a.keep)
+    print(f"backup written to {dest}")
+    return f"wrote {Path(dest).name}"
 
 
 def _cmd_init(a):
@@ -205,6 +214,27 @@ def _cmd_mark(a):
     ts = _local(a.when, pd.Timestamp.now(tz="UTC"))
     db.add_calibration_event(con, ts, a.kind, a.note)
     print(f"calibration event {a.kind} at {ts.tz_convert('UTC')}")
+
+
+def _cmd_serve(a):
+    from .web import serve
+    serve(a.host, a.port, a.db, vm_url=a.vm, source=a.source, csv=a.csv,
+          cache_s=a.cache_seconds, history_days=a.days)
+
+
+# Scheduled commands whose runs are recorded in job_runs (shown on the status page).
+JOBS = ("calibrate", "score", "archive", "backup")
+
+
+def _run_job(a):
+    con = db.connect(a.db)
+    run = db.job_started(con, a.cmd)
+    try:
+        summary = a.func(a)
+    except BaseException as e:  # record the failure, then fail as before
+        db.job_finished(con, run, False, f"{type(e).__name__}: {e}")
+        raise
+    db.job_finished(con, run, True, summary if isinstance(summary, str) else None)
 
 
 def _source_args(p, need_db=False):
@@ -297,8 +327,25 @@ def main(argv=None):
     s.add_argument("--when", help="local time, default now"); s.add_argument("--note")
     s.set_defaults(func=_cmd_mark)
 
+    s = sub.add_parser("serve", help="small status web page (alerts, normal band, job runs)")
+    s.add_argument("--db", required=True)
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--vm", help="VictoriaMetrics base URL; without it the page shows SQLite only")
+    g.add_argument("--csv", help="read readings from this CSV instead (local mock)")
+    s.add_argument("--source", default=None, help='VM source label ("sim" for simulated)')
+    s.add_argument("--host", default="0.0.0.0")
+    s.add_argument("--port", type=int, default=8080)
+    s.add_argument("--days", type=float, default=16,
+                   help="history read for the normal band (needs 14+ days)")
+    s.add_argument("--cache-seconds", type=float, default=120,
+                   help="recompute the page data at most this often")
+    s.set_defaults(func=_cmd_serve)
+
     a = p.parse_args(argv)
-    a.func(a)
+    if a.cmd in JOBS and getattr(a, "db", None):
+        _run_job(a)
+    else:
+        a.func(a)
 
 
 if __name__ == "__main__":

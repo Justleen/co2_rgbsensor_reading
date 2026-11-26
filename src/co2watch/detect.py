@@ -183,6 +183,7 @@ def baseline_scores(df: pd.DataFrame, cfg: DetectConfig,
     out["baseline_hue"] = raw.rolling(f"{cfg.persist_min}min", min_periods=1).min() \
         .where(raw.notna())
     out["hue_now"], out["hue_normal"], out["hue_dev"] = hue, med, dev
+    out["hue_allowed"] = allowed.where(ok)    # |dev| at which baseline_hue reaches 1.0
 
     if "ambient_clear" in df:
         amb = df["ambient_clear"].rolling("30min", min_periods=3).median()

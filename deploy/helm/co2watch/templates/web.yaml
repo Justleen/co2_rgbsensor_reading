@@ -1,0 +1,66 @@
+{{- if .Values.web.enabled }}
+# Status page: `co2watch serve` reads SQLite (alerts, job runs, daily shape) and
+# VictoriaMetrics (last 16 days, for the learned normal band). Read-only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: co2watch-web
+  namespace: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: co2watch
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "co2watch.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+      annotations:
+        checksum/env: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "co2watch.podSpecCommon" . | nindent 6 }}
+      containers:
+        - name: web
+          {{- include "co2watch.containerCommon" . | nindent 10 }}
+          args: ["serve", "--db", "$(DB)", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)",
+                 "--port", "{{ .Values.web.port }}", "--cache-seconds", "{{ .Values.web.cacheSeconds }}"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 60
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: co2watch-web
+  namespace: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.web.service.type }}
+  selector:
+    app.kubernetes.io/name: co2watch
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      {{- if and (eq .Values.web.service.type "NodePort") .Values.web.service.nodePort }}
+      nodePort: {{ .Values.web.service.nodePort }}
+      {{- end }}
+{{- end }}

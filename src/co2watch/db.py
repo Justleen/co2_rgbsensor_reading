@@ -70,6 +70,18 @@ CREATE TABLE IF NOT EXISTS models (
     metrics_json TEXT,
     active       INTEGER NOT NULL DEFAULT 0
 );
+
+-- One row per run of a scheduled command (calibrate, score, archive, backup),
+-- shown on the status page.
+CREATE TABLE IF NOT EXISTS job_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job          TEXT    NOT NULL,
+    started_ms   INTEGER NOT NULL,
+    finished_ms  INTEGER,
+    ok           INTEGER,                 -- 1 ok, 0 failed, NULL still running
+    summary      TEXT
+);
+CREATE INDEX IF NOT EXISTS job_runs_job ON job_runs (job, started_ms);
 """
 
 
@@ -196,6 +208,39 @@ def read_alerts(con) -> pd.DataFrame:
     for c in ("start_ms", "end_ms"):
         df[c.replace("_ms", "")] = pd.to_datetime(df.pop(c), unit="ms", utc=True)
     return df
+
+
+def job_started(con, job: str) -> int:
+    cur = con.execute("INSERT INTO job_runs (job, started_ms) VALUES (?, ?)",
+                      (job, ms(pd.Timestamp.now(tz="UTC"))))
+    con.commit()
+    return int(cur.lastrowid)
+
+
+def job_finished(con, run_id: int, ok: bool, summary: str | None = None, keep: int = 200) -> None:
+    """Close a job run and keep only the newest ``keep`` runs per job."""
+    con.execute("UPDATE job_runs SET finished_ms = ?, ok = ?, summary = ? WHERE id = ?",
+                (ms(pd.Timestamp.now(tz="UTC")), int(ok), (summary or "")[:500], run_id))
+    con.execute("DELETE FROM job_runs WHERE job = (SELECT job FROM job_runs WHERE id = ?) AND id "
+                "NOT IN (SELECT id FROM job_runs WHERE job = (SELECT job FROM job_runs WHERE id = ?)"
+                " ORDER BY started_ms DESC LIMIT ?)", (run_id, run_id, keep))
+    con.commit()
+
+
+def last_job_runs(con) -> list[dict]:
+    """Latest run of each job, plus the latest successful one."""
+    out = []
+    for (job,) in con.execute("SELECT DISTINCT job FROM job_runs ORDER BY job").fetchall():
+        last = con.execute("SELECT started_ms, finished_ms, ok, summary FROM job_runs WHERE job=? "
+                           "ORDER BY started_ms DESC LIMIT 1", (job,)).fetchone()
+        good = con.execute("SELECT MAX(finished_ms) FROM job_runs WHERE job=? AND ok=1",
+                           (job,)).fetchone()[0]
+        fails = con.execute("SELECT COUNT(*) FROM job_runs WHERE job=? AND ok=0 AND started_ms >"
+                            " COALESCE((SELECT MAX(started_ms) FROM job_runs WHERE job=? AND ok=1),"
+                            " 0)", (job, job)).fetchone()[0]
+        out.append({"job": job, "started_ms": last[0], "finished_ms": last[1], "ok": last[2],
+                    "summary": last[3], "last_ok_ms": good, "fails_since_ok": fails})
+    return out
 
 
 def eye_checks(con, hue_at) -> pd.DataFrame:

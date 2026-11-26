@@ -18,6 +18,23 @@ The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-che
 
 <img src="docs/img/web-ui.png" alt="co2watch web page: drop-checker colour swatch, dimmer, light schedule curve and table" width="320">
 
+## Status page
+
+`co2watch serve` is a small read-only page for the pipeline itself, served
+from the cluster (no Grafana needed): the estimated CO2 now, the last 48 h
+against the learned normal band, alerts with their reasons, the last run of
+each job, and the daily shape from the archive.
+
+<img src="docs/img/status-page.png" alt="co2watch status page: CO2 estimate, 48 h chart with normal band, alerts, jobs, daily shape" width="420">
+
+```bash
+co2watch serve --db data/labels.sqlite --vm http://<vm-host>:8428 --port 8080
+co2watch serve --db data/labels.sqlite --csv data/sim/sim_readings.csv   # local mock
+```
+
+On k3s the chart runs it as `co2watch-web` on NodePort 30880 (see
+[docs/deploy.md](docs/deploy.md)).
+
 ## What's here
 
 | Path | What |
@@ -26,13 +43,14 @@ The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-che
 | `docs/design.md` | decisions, architecture, `/metrics` contract, roadmap, open items |
 | `docs/detection.md` | M2 detectors, how alerts are scored and explained, evaluation on simulated data |
 | `docs/deploy.md` | Helm install on k3s, labelling via the toolbox pod, backups, troubleshooting |
-| `deploy/helm/co2watch/` | Helm chart: namespace, SQLite PVC, toolbox pod, CronJobs |
+| `deploy/helm/co2watch/` | Helm chart: namespace, SQLite PVC, toolbox pod, status page, CronJobs |
 | `Dockerfile`, `.github/workflows/image.yml` | multi-arch image (amd64 + arm64) pushed to GHCR on a version tag |
 | `src/co2watch/vm.py` | read raw frames + context from VictoriaMetrics; CSV export; backfill import |
-| `src/co2watch/db.py` | SQLite: labels, calibration events, alert log, model registry |
+| `src/co2watch/db.py` | SQLite: labels, calibration events, alert log, job runs, model registry |
 | `src/co2watch/features.py` | LED off/on frame subtraction, hue, ratios, UTC grid, rolling features, local time |
 | `src/co2watch/simulator.py` | synthetic tank + drop checker + two-frame sensor, with injectable anomalies |
 | `src/co2watch/archive.py` | long-term store in SQLite: hourly/daily aggregates, raw windows around alerts and labels |
+| `src/co2watch/web.py`, `static/status.html` | status page (`co2watch serve`): stdlib HTTP server, one JSON endpoint, plain HTML/JS |
 | `src/co2watch/detect.py`, `evaluate.py` | M2 detection and its evaluation on simulated anomalies |
 | `src/co2watch/calibration.py` | self-calibration against the leaflet chart, drift report |
 | `src/co2watch/config.py` | leaflet chart (KH4), metric names, priors |
