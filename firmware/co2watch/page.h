@@ -61,7 +61,7 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
 <div id="dragHint" style="display:none"><div class="row" style="margin-top:6px"><label>Hours at 100 %
 <input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label></div>
-<small class="mut">Preview: full light (100 %) lasts exactly this many hours. Drag the thick 100 % bar to move the whole day; drag the other points to shape the ramps (time snaps to 5 min). After the bar the light fades to the next point, and from there it stays at 40 % or lower (shaded). Only switching on from 0 % or off to 0 % can be instant (step); everything else fades. Press Save schedule to keep it.</small></div>
+<small class="mut">Full light (100 %) lasts exactly this many hours. Drag the thick 100 % bar to move the whole day; drag the other points to shape the ramps (time snaps to 5 min). After the bar the light fades to the next point, and from there it stays at 40 % or lower (shaded). Only switching on from 0 % or off to 0 % can be instant (step); everything else fades. Press Save schedule to keep it.</small></div>
 <table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
 <div class="row" style="margin-top:10px"><button onclick="saveSch()">Save schedule</button>
 <button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div>
@@ -90,7 +90,7 @@ function rules(p){const L=[];for(let m=0;m<1440;m++)L.push(lvAt(p,m));const mx=M
  let off=-1;for(let k=pk;k<pk+1440;k++)if(L[k%1440]<60){off=k%1440;break}
  return{co2on:(pk-120+1440)%1440,co2off:off,co2:m=>off<0||inWin(m,(pk-120+1440)%1440,off),air:m=>L[Math.floor(m)%1440]<40}}
 let hasRelays=0,dragOn=0;
-// --- Drag-to-edit (preview, emulator only) ---------------------------------
+// --- Drag-to-edit (firmware >= 0.5.0 sends drag:true; the emulator sends preview) ---------------------------------
 // Time snaps to 5 min, level to 1 %. Points stay in time order. The 100 % plateau
 // (first point at 100 % and the next one) is a bar of exactly maxh hours: drag it
 // anywhere along its length to move the whole day (all points keep their relative
@@ -169,7 +169,7 @@ async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
  catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
 function show(s){
  showRelays(s.relays,s.relay_src);
- if(s.preview&&!dragOn)initDrag();
+ if((s.preview||s.drag)&&!dragOn)initDrag();
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';

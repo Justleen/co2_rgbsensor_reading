@@ -66,7 +66,7 @@ section stays hidden because the board reports no relays.
 
 <img src="../docs/img/web-ui-relay-preview.png" alt="Emulator page with the relay preview and CO2/Air bands on the schedule graph" width="320">
 
-### Schedule drag editing (emulator only)
+### Schedule drag editing
 
 In the emulator the schedule graph is editable by dragging. The 100 % stretch is
 a bar of exactly "Hours at 100 %" hours (default 7): drag it to move the whole
@@ -74,9 +74,9 @@ day, change the field to resize it. Other points drag one by one (5 min snap);
 before the bar they stay below 100 %, and from the first point after it the
 light stays at 40 % or lower (shaded). The fade straight after the bar may pass
 above 40 %. Only switching on from 0 % or off to 0 % may be a step; everything
-else fades. Nothing is stored until Save schedule. **Preview only: the D1 does
-not enable this** (it is switched on by a `preview` flag only the emulator sends,
-and the firmware does not store the hours value).
+else fades. Nothing is stored until Save schedule. Since v0.5.0 the D1 serves this
+too (`drag:true` in `/api/state`) and stores the hours value with the schedule
+(`/api/schedule?maxh=`). The limits are enforced by the page while editing.
 
 <img src="../docs/img/web-ui-schedule-drag.png" alt="Schedule section with the draggable 7 h bar and the shaded 40 % cap" width="320">
 
