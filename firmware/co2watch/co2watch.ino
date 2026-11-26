@@ -1,41 +1,25 @@
 // co2watch firmware for a Wemos D1 mini (ESP8266).
 //
-// Reads a TCS34725 colour sensor looking at a CO2 drop checker and serves the
-// last reading on http://<ip>/metrics in Prometheus text format, for
-// VictoriaMetrics to scrape. See docs/design.md section 4 for the contract.
+// Sensor: a TCS34725 looks at a CO2 drop checker. Each reading (every 5 min) is
+// two frames back to back, LEDs off (ambient) then on; the LEDs are switched by
+// PCF8574 P0 (found by an I2C scan). Gain and ATIME are fixed. Raw counts go to
+// /metrics (Prometheus text, scraped by VictoriaMetrics; see docs/design.md 4).
+// Wiring: SDA = D2, SCL = D1, TCS34725 at 0x29, PCF8574 at 0x20-0x27/0x38-0x3F.
 //
-// Wiring: I2C SDA = D2 (GPIO4), SCL = D1 (GPIO5). TCS34725 at 0x29. The
-// breakout's LED pin is driven by PCF8574 P0 (LOW = LEDs off). The PCF8574
-// address is found by scanning 0x20-0x27 (or 0x38-0x3F for the "A" part).
+// Colour (display only): net = on - off, white-balanced, as hex/hue. The CO2
+// index maps the hue (average of the last 3 readings) linearly between a Low
+// (0 %) and High (100 %) hue; not clamped.
 //
-// Each reading is two frames taken back to back: LEDs off (ambient), then
-// LEDs on. Gain and ATIME are fixed constants and must not change once the
-// baseline is collected.
+// Light: D6 (GPIO12) 1 kHz PWM -> PWM-to-0-10V board -> Mean Well LCM-40 DIM.
+// The light always follows the schedule: 8 points (time + level) with a smooth /
+// linear / step fade to the next point, wrapping at midnight, local time from
+// NTP (Europe/Amsterdam, DST via the TZ rule). "Set to max" (/dimmer?level=100)
+// holds a level for 1 hour, then the schedule resumes; without a valid time the
+// light sits at SAFE_PCT. During a reset D6 is low (LCM minimum) for ~1 s.
 //
-// Light dimmer (manual only, nothing automatic): D6 (GPIO12) outputs 1 kHz PWM
-// to a PWM-to-0-10V converter whose OUT drives the Mean Well LCM-40 DIM+/DIM-.
-// Duty % = light level %. Set it with http://<host>/dimmer?level=NN (0-100),
-// read it with http://<host>/dimmer. Requests are clamped to DIM_MIN_PCT..
-// DIM_MAX_PCT. The last level set is stored in flash and restored at boot.
-// While the D1 boots or resets, D6 is low, so the LCM sits at its minimum
-// (a dim glow, not off) for about a second.
-//
-// Light schedule: 8 points (time + level), each with a ramp to the next point
-// (smooth = cosine, linear, or step), wrapping around midnight. Local time
-// comes from NTP in Europe/Amsterdam (DST handled by the TZ rule). When the
-// schedule is on: a manual change holds for 1 hour, then the schedule resumes;
-// without a valid time the light goes to SAFE_PCT. When it is off, only manual
-// control applies. Edit it on the web page; it is stored in flash.
-//
-// Web page at http://<host>/ : set the dimmer and see the drop-checker colour
-// (net = LEDs on - LEDs off, white-balanced, as a swatch, hex and hue). The
-// white balance is display-only; /metrics keeps the raw counts for the model.
-// "Use as white reference" stores per-channel gains from the current reading
-// (take it with the sensor on the white backing, no drop checker).
-//
-// Serial (115200): prints the I2C scan at boot and every reading.
-// Send 'r' to take a reading now, 's' to rescan the bus, 'dNN' + Enter to set
-// the dimmer to NN %.
+// Settings (schedule, hours at 100 %, white balance, index ends) live in one
+// struct in EEPROM. Web page at / (page.html -> page.h via gen_page.py).
+// Serial (115200): I2C scan at boot, every reading; 'r' = read now, 's' = scan.
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -60,33 +44,20 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.6.4"
+#define FW_VERSION "0.7.0"
 
-// ---- dimmer limits (edit and reflash to change) -----------------------------
+// ---- light ------------------------------------------------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
 static const uint32_t DIM_PWM_HZ = 1000;    // converter accepts 22 Hz - 20 kHz
-static const uint8_t DIM_MIN_PCT = 0;       // lowest level a request can set
-static const uint8_t DIM_MAX_PCT = 100;     // highest level a request can set
-static const uint8_t DIM_FIRST_BOOT_PCT = 0;  // used until a level is ever set
-static const uint8_t EEPROM_MAGIC = 0xD1;
-static const uint8_t EEPROM_WB_MAGIC = 0xB4;  // byte 2; gains at bytes 4..15
-static const uint8_t EEPROM_SCHED_MAGIC = 0x5C;  // byte 16; enable 17; points 18..49
-static const int EEPROM_MAXH = 50;  // hours at 100 %, in half hours (1..32)
-static const int EEPROM_IDX = 52;   // magic 0xC1; float low hue @54, high hue @58
 
-// ---- CO2 index ----------------------------------------------------------------
-// Zooms into the drop checker's colour band: the (white-balanced, smoothed) hue
-// is mapped linearly so that IDX_LOW_HUE = 0 % (blue, low CO2) and IDX_HIGH_HUE =
-// 100 % (high CO2). Low default is the leaflet's 3 mg/l hue; high default is the
-// end leen set on the D1 on 2026-11-26. Set both ends from real readings on the
-// page. Not clamped, so values below 0 or above 100 mean "outside the range".
-static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 153.5;  // ends set on the D1 2026-11-26
+// ---- CO2 index (defaults: leaflet 3 mg/l hue; High as set on the D1) -------
+static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 153.5;
 static const uint8_t IDX_SMOOTH = 3;  // readings averaged (3 x 5 min)
 
 // ---- schedule ---------------------------------------------------------------
 static const char *TZ_AMSTERDAM = "CET-1CEST,M3.5.0,M10.5.0/3";
 static const float SAFE_PCT = 30;                       // no valid time
-static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // manual hold
+static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // "Set to max" hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
 // Default = the schedule saved on the D1 on 2026-11-26 19:03 (7 h at 100 %
@@ -128,21 +99,39 @@ struct Colour {
 };
 
 uint32_t i2cErrors = 0;
-uint8_t dimPct = 0;     // last manual level
-float dimOut = 0;       // what D6 actually outputs, in %
-SchedPoint sched[8];
-bool schedEnabled = false;
-float idxLow = IDX_DEFAULT_LOW, idxHigh = IDX_DEFAULT_HIGH;
-float hueHist[IDX_SMOOTH];
-uint8_t hueN = 0, hueHead = 0;
-float schedMaxH = 7;   // hours at 100 % (the page enforces it while editing)
+float dimOut = 0;       // what D6 outputs, in %
 bool overrideActive = false;
 uint32_t overrideStart = 0;
-const char *dimSource = "manual";  // manual / schedule / override / safe
-uint32_t dimChanges = 0;
+const char *dimSource = "safe";  // schedule / override / safe
+float hueHist[IDX_SMOOTH];
+uint8_t hueN = 0, hueHead = 0;
 uint32_t lastReadMs = 0;
 bool haveReading = false;
 ESP8266WebServer server(80);
+
+// All persistent settings, stored as one block at EEPROM address 0.
+static const uint8_t SETTINGS_VERSION = 0x60;  // bump when the layout changes
+struct Settings {
+  uint8_t version;
+  SchedPoint sched[8];
+  uint8_t maxhHalf;  // hours at 100 %, in half hours
+  float wb[3];       // white-balance gains r, g, b
+  float idxLow, idxHigh;
+} cfg;
+
+void settingsDefaults() {
+  cfg.version = SETTINGS_VERSION;
+  memcpy(cfg.sched, SCHED_DEFAULT, sizeof cfg.sched);
+  cfg.maxhHalf = 14;
+  cfg.wb[0] = cfg.wb[1] = cfg.wb[2] = 1;
+  cfg.idxLow = IDX_DEFAULT_LOW;
+  cfg.idxHigh = IDX_DEFAULT_HIGH;
+}
+
+void settingsSave() {
+  EEPROM.put(0, cfg);
+  EEPROM.commit();
+}
 
 // ---- I2C helpers -----------------------------------------------------------
 bool tcsWrite(uint8_t reg, uint8_t val) {
@@ -198,9 +187,12 @@ uint16_t maxCount() {
 
 uint32_t integrationMs() { return (uint32_t)((256 - ATIME) * 24 + 9) / 10; }
 
+// 0x44 = TCS34721/5, 0x4D = TCS34723/7 (the board in hand).
+bool tcsIdOk(uint8_t &id) { return tcsRead(REG_ID, &id, 1) && (id == 0x44 || id == 0x4D); }
+
 bool tcsInit() {
   uint8_t id = 0;
-  last.idOk = tcsRead(REG_ID, &id, 1) && (id == 0x44 || id == 0x4D);
+  last.idOk = tcsIdOk(id);
   bool ok = tcsWrite(REG_ATIME, ATIME) && tcsWrite(REG_CONTROL, GAIN_REG) &&
             tcsWrite(REG_ENABLE, EN_PON);
   delay(3);  // 2.4 ms warm-up after PON
@@ -230,7 +222,7 @@ Frame takeFrame() {
 void takeReading() {
   Reading r;
   uint8_t id = 0;
-  r.idOk = tcsRead(REG_ID, &id, 1) && (id == 0x44 || id == 0x4D);
+  r.idOk = tcsIdOk(id);
   // Re-apply the fixed settings every time, in case the chip browned out.
   tcsWrite(REG_ATIME, ATIME);
   tcsWrite(REG_CONTROL, GAIN_REG);
@@ -248,8 +240,7 @@ void takeReading() {
   r.saturated = r.off.c >= mx || r.on.c >= mx || r.on.r >= mx || r.on.g >= mx ||
                 r.on.b >= mx;
   r.seq = last.seq + 1;
-  time_t now = time(nullptr);
-  r.ts = now > 1700000000 ? now : 0;
+  r.ts = timeValid() ? time(nullptr) : 0;
   r.millisAt = millis();
   last = r;
   haveReading = true;
@@ -272,63 +263,48 @@ void takeReading() {
       r.saturated ? " SATURATED" : "", (unsigned long)i2cErrors);
 }
 
-// ---- dimmer -----------------------------------------------------------------
-uint8_t clampDim(int pct) {
-  if (pct < DIM_MIN_PCT) return DIM_MIN_PCT;
-  if (pct > DIM_MAX_PCT) return DIM_MAX_PCT;
-  return (uint8_t)pct;
-}
-
+// ---- light --------------------------------------------------------------------
 void setOutput(float pct) {
-  if (pct < DIM_MIN_PCT) pct = DIM_MIN_PCT;
-  if (pct > DIM_MAX_PCT) pct = DIM_MAX_PCT;
-  dimOut = pct;
-  analogWrite(DIM_PIN, (int)(pct * 10 + 0.5f));  // range 0..1000, 0.1 % steps
+  dimOut = constrain(pct, 0.0f, 100.0f);
+  analogWrite(DIM_PIN, (int)(dimOut * 10 + 0.5f));  // range 0..1000, 0.1 % steps
 }
 
-// A manual change: from the page, /dimmer or serial.
-void applyDim(uint8_t pct, bool save) {
-  dimPct = clampDim(pct);
-  setOutput(dimPct);
-  if (save) {
-    dimChanges++;
-    EEPROM.write(0, EEPROM_MAGIC);
-    EEPROM.write(1, dimPct);
-    EEPROM.commit();
-    if (schedEnabled) {
-      overrideActive = true;
-      overrideStart = millis();
-      dimSource = "override";
-    }
-  }
-  Serial.printf("dimmer: %u %% (limits %u-%u)%s\n", dimPct, DIM_MIN_PCT, DIM_MAX_PCT,
-                overrideActive ? ", schedule paused 1 h" : "");
+// "Set to max" (or any level via /dimmer): hold it for 1 hour, then the
+// schedule takes over again.
+void holdLevel(float pct) {
+  setOutput(pct);
+  overrideActive = true;
+  overrideStart = millis();
+  dimSource = "override";
+  Serial.printf("light: %.1f %% for 1 h\n", dimOut);
 }
 
-// ---- schedule ---------------------------------------------------------------
+// ---- time / schedule ------------------------------------------------------------
 bool timeValid() { return time(nullptr) > 1700000000; }
 
-float minuteOfDay() {
+// Local time; false until NTP has set the clock.
+bool localNow(struct tm &t) {
   time_t now = time(nullptr);
-  struct tm t;
   localtime_r(&now, &t);
-  return t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f;
+  return now > 1700000000;
 }
+
+float minuteOfDay(const struct tm &t) { return t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f; }
 
 float schedLevelAt(float m) {
   int i = 7;  // before the first point: still in the segment from the last one
   for (int k = 0; k < 8; k++)
-    if (sched[k].min <= m) i = k;
+    if (cfg.sched[k].min <= m) i = k;
   int j = (i + 1) % 8;
-  float span = (float)sched[j].min - sched[i].min;
+  float span = (float)cfg.sched[j].min - cfg.sched[i].min;
   if (span <= 0) span += 1440;
-  float d = m - sched[i].min;
+  float d = m - cfg.sched[i].min;
   if (d < 0) d += 1440;
   float f = d / span;
   if (f > 1) f = 1;
-  float a = sched[i].level, b = sched[j].level;
-  if (sched[i].ramp == RAMP_STEP) return a;
-  if (sched[i].ramp == RAMP_SMOOTH) f = (1 - cosf(PI * f)) / 2;
+  float a = cfg.sched[i].level, b = cfg.sched[j].level;
+  if (cfg.sched[i].ramp == RAMP_STEP) return a;
+  if (cfg.sched[i].ramp == RAMP_SMOOTH) f = (1 - cosf(PI * f)) / 2;
   return a + (b - a) * f;
 }
 
@@ -340,70 +316,41 @@ bool schedValid(const SchedPoint *p) {
   return true;
 }
 
-void schedSave() {
-  EEPROM.write(16, EEPROM_SCHED_MAGIC);
-  EEPROM.write(17, schedEnabled);
-  EEPROM.put(18, sched);
-  EEPROM.write(EEPROM_MAXH, (uint8_t)(schedMaxH * 2 + 0.5f));
-  EEPROM.commit();
-}
-
-// The schedule always runs after a boot (power cut, reset, OTA), so the light
-// never stays stuck at a manual level. Switching it off on the page lasts until
-// the next reboot.
-void schedLoad() {
-  memcpy(sched, SCHED_DEFAULT, sizeof sched);
-  schedEnabled = true;
-  if (EEPROM.read(16) != EEPROM_SCHED_MAGIC) return;
-  SchedPoint p[8];
-  EEPROM.get(18, p);
-  if (!schedValid(p)) return;
-  memcpy(sched, p, sizeof sched);
-  uint8_t hh = EEPROM.read(EEPROM_MAXH);
-  if (hh >= 1 && hh <= 32) schedMaxH = hh / 2.0f;
-}
-
 // Called every second.
 void schedTick() {
-  if (!schedEnabled) {
-    overrideActive = false;
-    dimSource = "manual";
-    return;
-  }
   if (overrideActive) {
     if (millis() - overrideStart < OVERRIDE_MS) return;
     overrideActive = false;
-    Serial.println(F("schedule: manual override expired"));
+    Serial.println(F("light: override over, back to the schedule"));
   }
-  if (!timeValid()) {
+  struct tm t;
+  if (!localNow(t)) {
     dimSource = "safe";
     setOutput(SAFE_PCT);
   } else {
     dimSource = "schedule";
-    setOutput(schedLevelAt(minuteOfDay()));
+    setOutput(schedLevelAt(minuteOfDay(t)));
   }
 }
 
 void sendSchedule() {
-  String b = "{\"en\":";
-  b += schedEnabled ? "true" : "false";
-  b += ",\"pts\":[";
+  String b = "{\"pts\":[";
   for (int k = 0; k < 8; k++) {
     if (k) b += ',';
     b += '[';
-    b += sched[k].min; b += ','; b += sched[k].level; b += ','; b += sched[k].ramp;
+    b += cfg.sched[k].min; b += ','; b += cfg.sched[k].level; b += ','; b += cfg.sched[k].ramp;
     b += ']';
   }
   b += "],\"maxh\":";
-  b += String(schedMaxH, 1);
+  b += String(cfg.maxhHalf / 2.0f, 1);
   b += "}";
   server.send(200, "application/json", b);
 }
 
-// GET: current schedule. POST args: en=0|1, pts="min,level,ramp;..." (8),
-// reset=1 (defaults, keeps en), resume=1 (end the manual override now).
+// GET: current schedule. POST args: pts="min,level,ramp;..." (8), maxh=hours,
+// reset=1 (default points), resume=1 (end a "Set to max" hold now).
 void handleSchedule() {
-  if (server.hasArg("reset")) memcpy(sched, SCHED_DEFAULT, sizeof sched);
+  if (server.hasArg("reset")) memcpy(cfg.sched, SCHED_DEFAULT, sizeof cfg.sched);
   if (server.hasArg("pts")) {
     SchedPoint p[8];
     String v = server.arg("pts");
@@ -424,12 +371,7 @@ void handleSchedule() {
       server.send(400, "text/plain", "times must increase, levels 0-100, ramp 0-2\n");
       return;
     }
-    memcpy(sched, p, sizeof sched);
-  }
-  if (server.hasArg("en")) {
-    // The schedule always runs for now (leen, 2026-11-26): en=0 is ignored.
-    schedEnabled = true;
-    overrideActive = false;
+    memcpy(cfg.sched, p, sizeof cfg.sched);
   }
   if (server.hasArg("resume")) overrideActive = false;
   if (server.hasArg("maxh")) {
@@ -438,29 +380,31 @@ void handleSchedule() {
       server.send(400, "text/plain", "maxh must be 0.5-16 hours\n");
       return;
     }
-    schedMaxH = (int)(h * 2 + 0.5f) / 2.0f;
+    cfg.maxhHalf = (uint8_t)(h * 2 + 0.5f);
   }
-  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("en") ||
-      server.hasArg("maxh"))
-    schedSave();
+  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("maxh")) settingsSave();
   schedTick();
   sendSchedule();
 }
 
-void dimmerBegin() {
+void lightBegin() {
   analogWriteFreq(DIM_PWM_HZ);
   analogWriteRange(1000);
-  EEPROM.begin(64);
-  uint8_t pct = DIM_FIRST_BOOT_PCT;
-  if (EEPROM.read(0) == EEPROM_MAGIC) pct = EEPROM.read(1);
-  schedLoad();
-  if (schedEnabled) setOutput(SAFE_PCT);  // until NTP gives the time
-  else applyDim(pct, false);
-  dimPct = clampDim(pct);
-  wbLoad();
-  idxLoad();
+  setOutput(SAFE_PCT);  // until NTP gives the time
 }
 
+void settingsLoad() {
+  EEPROM.begin(sizeof(Settings));
+  EEPROM.get(0, cfg);
+  bool ok = cfg.version == SETTINGS_VERSION && schedValid(cfg.sched) &&
+            cfg.maxhHalf >= 1 && cfg.maxhHalf <= 32 &&
+            cfg.idxLow >= 0 && cfg.idxLow <= 360 && cfg.idxHigh >= 0 &&
+            cfg.idxHigh <= 360 && fabsf(cfg.idxLow - cfg.idxHigh) >= 1;
+  for (int i = 0; i < 3; i++) ok = ok && cfg.wb[i] > 0.01f && cfg.wb[i] < 100.0f;
+  if (!ok) settingsDefaults();  // blank, corrupt or an older layout
+}
+
+// POST /dimmer?level=0-100: hold that level for 1 hour ("Set to max" = 100).
 void handleDimmer() {
   if (server.hasArg("level")) {
     String v = server.arg("level");
@@ -470,31 +414,14 @@ void handleDimmer() {
       server.send(400, "text/plain", "level must be an integer 0-100\n");
       return;
     }
-    applyDim((uint8_t)pct, true);
+    holdLevel(pct);
   }
-  char body[128];
-  snprintf(body, sizeof body, "{\"level\":%.1f,\"min\":%u,\"max\":%u,\"source\":\"%s\"}\n",
-           dimOut, DIM_MIN_PCT, DIM_MAX_PCT, dimSource);
+  char body[80];
+  snprintf(body, sizeof body, "{\"level\":%.1f,\"source\":\"%s\"}\n", dimOut, dimSource);
   server.send(200, "application/json", body);
 }
 
 // ---- colour (display only) -------------------------------------------------
-float wbGain[3] = {1, 1, 1};  // red, green, blue
-
-void wbLoad() {
-  if (EEPROM.read(2) != EEPROM_WB_MAGIC) return;
-  float g[3];
-  EEPROM.get(4, g);
-  for (int i = 0; i < 3; i++)
-    if (!(g[i] > 0.01f && g[i] < 100.0f)) return;  // corrupt: keep defaults
-  memcpy(wbGain, g, sizeof g);
-}
-
-void wbSave() {
-  EEPROM.write(2, EEPROM_WB_MAGIC);
-  EEPROM.put(4, wbGain);
-  EEPROM.commit();
-}
 
 Colour colourOf(const Reading &r) {
   Colour c;
@@ -504,7 +431,7 @@ Colour colourOf(const Reading &r) {
   c.net[2] = (int)r.on.b - r.off.b;
   float v[3], mx = 0, mn = 1e9;
   for (int i = 0; i < 3; i++) {
-    v[i] = (c.net[i] > 0 ? c.net[i] : 0) * wbGain[i];
+    v[i] = (c.net[i] > 0 ? c.net[i] : 0) * cfg.wb[i];
     if (v[i] > mx) mx = v[i];
     if (v[i] < mn) mn = v[i];
   }
@@ -542,33 +469,15 @@ bool smoothHue(float &h) {
 
 bool co2Index(float &idx) {
   float h;
-  if (!smoothHue(h) || fabsf(idxLow - idxHigh) < 1) return false;
-  idx = (idxLow - h) / (idxLow - idxHigh) * 100.0f;
+  if (!smoothHue(h) || fabsf(cfg.idxLow - cfg.idxHigh) < 1) return false;
+  idx = (cfg.idxLow - h) / (cfg.idxLow - cfg.idxHigh) * 100.0f;
   return true;
-}
-
-void idxLoad() {
-  if (EEPROM.read(EEPROM_IDX) != 0xC1) return;
-  float lo, hi;
-  EEPROM.get(EEPROM_IDX + 2, lo);
-  EEPROM.get(EEPROM_IDX + 6, hi);
-  if (lo >= 0 && lo <= 360 && hi >= 0 && hi <= 360 && fabsf(lo - hi) >= 1) {
-    idxLow = lo;
-    idxHigh = hi;
-  }
-}
-
-void idxSave() {
-  EEPROM.write(EEPROM_IDX, 0xC1);
-  EEPROM.put(EEPROM_IDX + 2, idxLow);
-  EEPROM.put(EEPROM_IDX + 6, idxHigh);
-  EEPROM.commit();
 }
 
 // POST /api/co2index: low=deg, high=deg, low=now / high=now (use the smoothed
 // hue), reset=1 (defaults). Always answers with the current index state.
 void handleIndex() {
-  float lo = idxLow, hi = idxHigh, h;
+  float lo = cfg.idxLow, hi = cfg.idxHigh, h;
   bool haveH = smoothHue(h);
   for (int k = 0; k < 2; k++) {
     const char *name = k ? "high" : "low";
@@ -598,54 +507,47 @@ void handleIndex() {
     server.send(400, "text/plain", "low and high hue must differ\n");
     return;
   }
-  if (lo != idxLow || hi != idxHigh) {
-    idxLow = lo;
-    idxHigh = hi;
-    idxSave();
+  if (lo != cfg.idxLow || hi != cfg.idxHigh) {
+    cfg.idxLow = lo;
+    cfg.idxHigh = hi;
+    settingsSave();
   }
   handleState();
 }
 
+// What the page needs (raw counts are in /metrics).
 void handleState() {
   Colour c = colourOf(last);
+  struct tm t;
+  bool tv = localNow(t);
   char tbuf[12] = "";
-  float mod = 0;
-  if (timeValid()) {
-    time_t now = time(nullptr);
-    struct tm t;
-    localtime_r(&now, &t);
-    strftime(tbuf, sizeof tbuf, "%H:%M:%S", &t);
-    mod = t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f;
-  }
+  if (tv) strftime(tbuf, sizeof tbuf, "%H:%M:%S", &t);
   unsigned long ovLeft =
       overrideActive ? (OVERRIDE_MS - (millis() - overrideStart)) / 1000UL : 0;
   float idxV = 0, idxH = 0;
   bool idxOk = co2Index(idxV);
   smoothHue(idxH);
-  char b[900];
+  char b[480];
   snprintf(b, sizeof b,
-           "{\"version\":\"" FW_VERSION "\",\"drag\":true,\"seq\":%lu,\"age\":%lu,\"saturated\":%s,\"i2c_errors\":%lu,"
-           "\"off\":[%u,%u,%u,%u],\"on\":[%u,%u,%u,%u],"
-           "\"colour\":{\"ok\":%s,\"net\":[%d,%d,%d],\"rgb\":[%u,%u,%u],\"hex\":\"%s\",\"hue\":%.1f},"
-           "\"wb\":[%.4f,%.4f,%.4f],\"dim\":{\"level\":%.1f,\"min\":%u,\"max\":%u,"
-           "\"source\":\"%s\",\"override_left\":%lu},"
+           "{\"version\":\"" FW_VERSION "\",\"drag\":true,\"seq\":%lu,\"age\":%lu,"
+           "\"saturated\":%s,\"i2c_errors\":%lu,"
+           "\"colour\":{\"ok\":%s,\"hex\":\"%s\",\"hue\":%.1f},"
+           "\"dim\":{\"level\":%.1f,\"source\":\"%s\",\"override_left\":%lu},"
            "\"time_valid\":%s,\"time\":\"%s\",\"minute\":%.2f,"
-           "\"co2idx\":{\"ok\":%s,\"value\":%.1f,\"hue\":%.1f,\"n\":%u,\"low\":%.1f,\"high\":%.1f}}",
+           "\"co2idx\":{\"ok\":%s,\"value\":%.1f,\"hue\":%.1f,\"low\":%.1f,\"high\":%.1f}}",
            (unsigned long)last.seq,
            haveReading ? (unsigned long)((millis() - last.millisAt) / 1000) : 0UL,
-           last.saturated ? "true" : "false", (unsigned long)i2cErrors, last.off.r,
-           last.off.g, last.off.b, last.off.c, last.on.r, last.on.g, last.on.b, last.on.c,
-           c.ok ? "true" : "false", c.net[0], c.net[1], c.net[2], c.rgb[0], c.rgb[1],
-           c.rgb[2], c.hex, c.hue, wbGain[0], wbGain[1], wbGain[2], dimOut, DIM_MIN_PCT,
-           DIM_MAX_PCT, dimSource, ovLeft, timeValid() ? "true" : "false", tbuf, mod,
-           idxOk ? "true" : "false", idxV, idxH, hueN, idxLow, idxHigh);
+           last.saturated ? "true" : "false", (unsigned long)i2cErrors,
+           c.ok ? "true" : "false", c.hex, c.hue, dimOut, dimSource, ovLeft,
+           tv ? "true" : "false", tbuf, tv ? minuteOfDay(t) : 0.0f,
+           idxOk ? "true" : "false", idxV, idxH, cfg.idxLow, cfg.idxHigh);
   server.send(200, "application/json", b);
 }
 
 void handleWhite() {
   if (server.hasArg("reset")) {
-    wbGain[0] = wbGain[1] = wbGain[2] = 1;
-    wbSave();
+    cfg.wb[0] = cfg.wb[1] = cfg.wb[2] = 1;
+    settingsSave();
   } else if (server.hasArg("set")) {
     Colour c = colourOf(last);
     int mx = max(c.net[0], max(c.net[1], c.net[2]));
@@ -653,8 +555,8 @@ void handleWhite() {
       server.send(409, "text/plain", "reading too weak or invalid for a white reference\n");
       return;
     }
-    for (int i = 0; i < 3; i++) wbGain[i] = (float)mx / c.net[i];
-    wbSave();
+    for (int i = 0; i < 3; i++) cfg.wb[i] = (float)mx / c.net[i];
+    settingsSave();
   }
   hueN = 0;  // hues before the change are not comparable
   Colour c2 = colourOf(last);
@@ -666,11 +568,11 @@ void handleWhite() {
 void handleMetrics() {
   String s;
   s.reserve(1800);
-  auto line = [&](const char *name, const char *labels, double v) {
+  auto line = [&](const char *name, const char *labels, double v, int decimals = 0) {
     s += name;
     if (labels && *labels) { s += '{'; s += labels; s += '}'; }
     char num[24];
-    snprintf(num, sizeof num, " %.0f\n", v);
+    snprintf(num, sizeof num, " %.*f\n", decimals, v);
     s += num;
   };
   s += F("# TYPE tcs34725_raw gauge\n");
@@ -693,21 +595,11 @@ void handleMetrics() {
     line("tcs34725_reading_age_seconds", "", (millis() - last.millisAt) / 1000.0);
     line("tcs34725_saturated", "", last.saturated);
     Colour col = colourOf(last);
-    if (col.ok) {
-      char num[24];
-      snprintf(num, sizeof num, " %.1f\n", col.hue);
-      s += F("tcs34725_hue_degrees");  // white-balanced, display grade
-      s += num;
-    }
+    if (col.ok) line("tcs34725_hue_degrees", "", col.hue, 1);  // white-balanced
     float idx;
-    if (co2Index(idx)) {
-      char num[24];
-      snprintf(num, sizeof num, " %.1f\n", idx);
-      s += F("co2watch_co2_index_percent");  // smoothed hue mapped low..high
-      s += num;
-    }
-    line("co2watch_co2_index_low_hue_degrees", "", idxLow);
-    line("co2watch_co2_index_high_hue_degrees", "", idxHigh);
+    if (co2Index(idx)) line("co2watch_co2_index_percent", "", idx, 1);
+    line("co2watch_co2_index_low_hue_degrees", "", cfg.idxLow, 1);
+    line("co2watch_co2_index_high_hue_degrees", "", cfg.idxHigh, 1);
   }
   line("tcs34725_reading_seq", "", last.seq);
   line("tcs34725_id_ok", "", last.idOk);
@@ -716,19 +608,9 @@ void handleMetrics() {
   s += F("# TYPE tcs34725_i2c_errors_total counter\n");
   line("tcs34725_i2c_errors_total", "", i2cErrors);
   line("co2watch_pcf8574_present", "", pcfAddr != 0);
-  {
-    char num[24];
-    snprintf(num, sizeof num, " %.1f\n", dimOut);
-    s += F("aquarium_light_dim_percent");
-    s += num;
-  }
-  line("aquarium_light_schedule_enabled", "", schedEnabled);
+  line("aquarium_light_dim_percent", "", dimOut, 1);
   line("aquarium_light_override_active", "", overrideActive);
   line("co2watch_time_valid", "", timeValid());
-  line("aquarium_light_dim_min_percent", "", DIM_MIN_PCT);
-  line("aquarium_light_dim_max_percent", "", DIM_MAX_PCT);
-  s += F("# TYPE aquarium_light_dim_changes_total counter\n");
-  line("aquarium_light_dim_changes_total", "", dimChanges);
   s += F("co2watch_build_info{version=\"" FW_VERSION "\"} 1\n");
   line("co2watch_uptime_seconds", "", millis() / 1000.0);
   line("co2watch_wifi_rssi_dbm", "", WiFi.RSSI());
@@ -739,7 +621,8 @@ void handleMetrics() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  dimmerBegin();  // first, so the light level is restored as early as possible
+  lightBegin();  // first, so D6 leaves its reset state as early as possible
+  settingsLoad();
   Serial.println(F("\n\nco2watch firmware " FW_VERSION));
   Wire.begin(D2, D1);  // SDA, SCL
   Wire.setClock(100000);  // long UTP run: stay at 100 kHz
@@ -809,18 +692,9 @@ void loop() {
     lastReadMs = millis();
     takeReading();
   }
-  static String cmd;
   while (Serial.available()) {
     char c = Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (cmd.length() > 1 && cmd[0] == 'd') applyDim(clampDim(cmd.substring(1).toInt()), true);
-      cmd = "";
-    } else if (cmd.length() == 0 && c == 'r') {
-      takeReading();
-    } else if (cmd.length() == 0 && c == 's') {
-      scanBus();
-    } else if (cmd.length() < 8) {
-      cmd += c;
-    }
+    if (c == 'r') takeReading();
+    if (c == 's') scanBus();
   }
 }
