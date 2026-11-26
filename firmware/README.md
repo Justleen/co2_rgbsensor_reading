@@ -25,8 +25,8 @@ drop checker and drives the light dimmer.
   struct in EEPROM with a version byte; a blank, corrupt or older layout falls
   back to the defaults in the sketch.
 
-- Light schedule (always runs; default: 4 % at 07:00, 18 % at 09:00, 40 % at 09:50, 100 % from 11:00 to 18:00,
-  40 % at 18:30, 25 % at 19:55, off by 21:00): 8 points (24-hour HH:MM +
+- Light schedule (always runs; default: 6 h at 100 % from 11:00 to 17:00, fades
+  from 06:45 and to off at 20:00): 8 points (24-hour HH:MM +
   level), each fading to the next one (smooth cosine, linear or step), wrapping
   at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).
   A manual change pauses the schedule for 1 hour; without a valid time the
