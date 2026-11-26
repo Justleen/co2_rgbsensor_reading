@@ -13,6 +13,8 @@ Commands
   mark-calibration  record a fluid change / sensor move
   score             M2 detection (rules, baseline, daily summaries); logs alerts
   alerts            list logged alerts
+  archive           nightly long-term store: hourly/daily aggregates and raw
+                    windows around alerts and labels
   evaluate          recall / false alarms on simulated anomalies
   init-db           create the SQLite schema
   backup            consistent copy of the SQLite file, keeping the newest N
@@ -129,6 +131,39 @@ def _cmd_score(a):
           f"latest score {last['score']:.2f}; {new} new alert(s)")
 
 
+def _cmd_archive(a):
+    from . import archive
+    from .detect import DetectConfig, detect
+    from .features import FRAME_COLS
+    con = db.connect(a.db)
+    raw = _load(a)
+    now = _local(a.now) if a.now else pd.Timestamp.now(tz="UTC")
+    raw = raw[raw.index < now]
+    df = prepare(raw, a.saturation)
+    events = db.calibration_events(con)
+    score = detect(df, DetectConfig(), events).scores["score"] if len(df) else None
+    first = (now.tz_convert(TZ).normalize() - pd.Timedelta(days=a.agg_days))
+    keep = archive.complete_days(df[df.index >= first], now)
+    nh = archive.save_hourly(con, archive.hourly(keep, score)) if len(keep) else 0
+    nd = archive.save_daily(con, archive.daily(keep, db.read_alerts(con), events, score)) \
+        if len(keep) else 0
+    print(f"aggregates: {nh} hours, {nd} days (complete local days since {first:%Y-%m-%d})")
+    for source, s, e in archive.event_windows(con, a.pad_hours):
+        if e > now:
+            continue  # window not finished yet; archived on a later run
+        if a.vm:
+            frames = vm.read_frames(a.vm, s, e, source=a.source)
+        else:
+            frames = raw.loc[s:e, FRAME_COLS]
+        frames = frames.dropna(how="all")
+        if frames.empty:
+            print(f"raw window {source}: no data left in the source (older than retention?)")
+            continue
+        n = archive.save_raw_window(con, source, frames)
+        print(f"raw window {source}: {n} samples {s.tz_convert(TZ):%Y-%m-%d %H:%M} .. "
+              f"{e.tz_convert(TZ):%Y-%m-%d %H:%M}")
+
+
 def _cmd_alerts(a):
     con = db.connect(a.db)
     al = db.read_alerts(con).tail(a.last)
@@ -221,6 +256,16 @@ def main(argv=None):
                    help="only log alerts that were active in this many recent hours")
     s.add_argument("--now", help="local time to treat as now (replays, tests)")
     s.set_defaults(func=_cmd_score)
+
+    s = sub.add_parser("archive", help="nightly: aggregates + raw windows around events to SQLite")
+    _source_args(s, need_db=True)
+    s.set_defaults(days=16)
+    s.add_argument("--agg-days", type=int, default=3,
+                   help="(re)write aggregates for this many complete local days")
+    s.add_argument("--pad-hours", type=float, default=6.0,
+                   help="raw data kept around each alert/label")
+    s.add_argument("--now", help="local time to treat as now (replays, tests)")
+    s.set_defaults(func=_cmd_archive)
 
     s = sub.add_parser("alerts", help="list logged alerts"); s.add_argument("--db", required=True)
     s.add_argument("--last", type=int, default=20)
