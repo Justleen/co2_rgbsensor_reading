@@ -9,4 +9,7 @@ Record a fluid change:
   kubectl -n {{ include "co2watch.ns" . }} exec deploy/co2watch-toolbox -- co2watch mark-calibration --db /data/{{ .Values.storage.dbFile }} --kind fluid_change
 Run a job now:
   kubectl -n {{ include "co2watch.ns" . }} create job --from=cronjob/co2watch-calibrate calibrate-manual
+{{- if .Values.web.enabled }}
+Status page: {{ if eq .Values.web.service.type "NodePort" }}http://<node IP>:{{ .Values.web.service.nodePort }}/{{ else }}service co2watch-web, port 80{{ end }}
+{{- end }}
 Enabled jobs:{{ range $n, $j := .Values.jobs }}{{ if $j.enabled }} {{ $n }}{{ end }}{{ end }}

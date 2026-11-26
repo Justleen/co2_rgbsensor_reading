@@ -1,0 +1,156 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>co2watch status</title><style>
+:root{--bg:#f6f6f4;--fg:#1d1d1b;--mut:#6b6b66;--card:#fff;--bd:#ddd;--ok:#2e8b57;--warn:#e0a020;--bad:#c62828;--band:rgba(46,139,87,.16)}
+@media(prefers-color-scheme:dark){:root{--bg:#161615;--fg:#eee;--mut:#9a9a94;--card:#222220;--bd:#3a3a37;--band:rgba(80,190,120,.18)}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px}
+section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
+h1{font-size:20px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.big{font-size:26px;font-variant-numeric:tabular-nums}
+small,.mut{color:var(--mut)}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:9px;color:#fff;background:var(--mut)}
+.pill.ok{background:var(--ok)}.pill.warn{background:var(--warn);color:#000}.pill.bad{background:var(--bad)}
+.sw{width:34px;height:34px;border-radius:8px;border:1px solid var(--bd);flex:none}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px}
+.kv div{font-variant-numeric:tabular-nums}.kv small{display:block}
+.msg{margin-top:8px;padding:6px 10px;border-radius:6px;font-size:13px;background:#f6dcdc;color:#7a1f1f}
+.msg.info{background:#fff3d6;color:#5a4300}
+canvas{width:100%;display:block}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
+td,th{text-align:right;padding:3px 6px;vertical-align:top}th{font-weight:600;color:var(--mut)}
+th:first-child,td:first-child{text-align:left}td.l{text-align:left}
+#daily td,#daily th{white-space:nowrap}@media(max-width:480px){table{font-size:12.5px}td,th{padding:3px 3px}}
+.al{border-top:1px solid var(--bd);padding:8px 0}.al:first-child{border-top:0;padding-top:0}
+.al p{margin:4px 0 0}
+.leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:6px}
+.leg i{display:inline-block;width:14px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
+</style></head><body><main>
+<h1>co2watch <small id="upd">loading…</small></h1>
+<div id="errs"></div>
+
+<section><h2>Now</h2>
+<div class="row"><span class="sw" id="sw"></span><span class="big" id="co2">-</span><span id="state"></span></div>
+<small id="co2sub"></small>
+<div class="kv">
+<div><small>Sensor hue</small><span id="hue">-</span></div>
+<div><small>Normal for this time</small><span id="norm">-</span></div>
+<div><small>Anomaly score</small><span id="score">-</span></div>
+<div><small>D1 CO2 index</small><span id="idx">-</span></div>
+<div><small>Light</small><span id="light">-</span></div>
+<div><small>Last reading</small><span id="age">-</span></div>
+</div>
+<div id="learn"></div>
+</section>
+
+<section><h2>Last 48 hours</h2>
+<canvas id="cv" height="230"></canvas>
+<div class="leg"><span><i style="background:var(--fg)"></i>drop checker (up = more CO2)</span>
+<span><i style="background:var(--band)"></i>learned normal</span>
+<span><i style="background:rgba(224,160,32,.75)"></i>light</span>
+<span><i style="border-top:2px dashed #3cb043;height:0"></i>leaflet bands</span>
+<span><i style="background:var(--bad)"></i>anomaly score</span></div>
+</section>
+
+<section><h2>Alerts</h2><div id="alerts"><small>loading…</small></div></section>
+
+<section><h2>Jobs</h2>
+<table id="jobs"><tr><th>job</th><th>last run</th><th>result</th></tr></table></section>
+
+<section><h2>Daily shape</h2>
+<table id="daily"><tr><th>day</th><th>night</th><th>peak</th><th>swing</th><th>90 % at</th><th>near peak</th><th>alerts</th></tr></table>
+<small>Sensor hue; lower is more CO2. Filled in nightly by the archive job.</small></section>
+</main><script>
+const $=id=>document.getElementById(id);let D=null;
+const BC={'blue':'#2f6fd6','blue-green':'#2b9fb3','teal-green':'#2bb3a0','green':'#3cb043','lime':'#c8d630'};
+const KIND={dropout:'No readings',stuck:'Sensor stuck',saturated:'Sensor saturated',config:'Sensor settings changed',
+ led_fail:'LED / sensor signal lost',clear_jump:'Signal jumped',baseline_hue:'Colour off its normal',
+ baseline_ambient:'Stray light',daily_peak:'Daily peak unusual',daily_night:'Night level unusual',
+ daily_swing:'Daily swing unusual',beyond_peak:'Beyond the usual peak'};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=ms=>ms==null?'-':new Date(ms).toLocaleString([], {weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false});
+const hhmm=ms=>new Date(ms).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false});
+function ago(ms){if(ms==null)return 'never';const m=Math.round((D.now_ms-ms)/60000);
+ if(m<1)return 'just now';if(m<90)return m+' min ago';const h=m/60;if(h<36)return Math.round(h)+' h ago';return Math.round(h/24)+' days ago'}
+function scorePill(s){if(s==null)return '';return s>=1?'<span class="pill bad">alert</span>':s>=.6?'<span class="pill warn">watch</span>':'<span class="pill ok">normal</span>'}
+function render(){
+ const L=D.latest,errs=[...D.errors];
+ if(L&&L.age_min>15)errs.unshift('No new readings for '+Math.round(L.age_min)+' min. Is the D1 online and VictoriaMetrics scraping it?');
+ if(!L&&!D.errors.length)errs.unshift('No readings available.');
+ $('errs').innerHTML=errs.map(e=>'<div class="msg">'+esc(e)+'</div>').join('');
+ $('upd').textContent='updated '+hhmm(D.now_ms);
+ if(L){
+  if(L.co2_mg_l!=null){$('co2').textContent='≈ '+L.co2_mg_l+' mg/l';
+   $('co2sub').textContent=L.band+' band, plausible '+L.co2_low+'–'+L.co2_high+' mg/l'+
+    (L.calibration=='ok'?'':L.calibration=='settling'?' (calibration still settling)':' (rough, no calibration anchors yet)');
+   $('sw').style.background=BC[L.band]||'#888'}
+  else{$('co2').textContent=L.hue!=null?L.hue+'°':'-';$('co2sub').textContent='no calibration yet'}
+  $('state').innerHTML=scorePill(L.score)+(L.score>=1&&L.kind?' <small>'+esc(KIND[L.kind]||L.kind)+'</small>':'');
+  $('hue').textContent=L.hue!=null?L.hue+'°':'-';
+  $('norm').textContent=L.normal_hue!=null?L.normal_hue+'°':'learning';
+  $('score').textContent=L.score!=null?L.score.toFixed(2)+' / 1.00':'-';
+  $('idx').textContent=L.co2_index_pct!=null?L.co2_index_pct+' %':'-';
+  $('light').textContent=L.light_pct!=null?L.light_pct+' %':'-';
+  $('age').textContent=ago(L.ts_ms)+(L.i2c_errors?' · '+L.i2c_errors+' I2C errors':'')+(L.saturated?' · saturated':'')}
+ const g=D.learning;$('learn').innerHTML=g&&!g.ready?'<div class="msg info">Still learning what normal looks like: '+
+  g.days+' of '+g.needed+' days'+(g.since_ms?' since the last fluid change':'')+'. Until then only the hard sensor checks can alert.</div>':'';
+ draw();
+ $('alerts').innerHTML=D.alerts.length?D.alerts.map(a=>'<div class="al"><div class="row"><b>'+esc(KIND[a.kind]||a.kind)+'</b>'+
+  (a.open?'<span class="pill bad">open</span>':'')+'<small>'+fmt(a.start_ms)+(a.end_ms?' – '+hhmm(a.end_ms):'')+' · score '+(a.score??0).toFixed(2)+'</small></div>'+
+  '<p>'+esc(a.reason)+'</p></div>').join(''):'<small>No alerts logged.</small>';
+ const jt=$('jobs');while(jt.rows.length>1)jt.deleteRow(1);
+ for(const j of D.jobs){const r=jt.insertRow(),st={ok:'ok',late:'warn',failed:'bad',running:'warn',never:''}[j.state];
+  const lab={ok:'ok',late:'late',failed:j.fails_since_ok>1?'failed ×'+j.fails_since_ok:'failed',running:'running',never:'never run'}[j.state];
+  r.innerHTML='<td>'+esc(j.job)+'</td><td>'+(j.started_ms?ago(j.started_ms):'-')+'</td><td><span class="pill '+st+'">'+lab+'</span></td>';
+  if(j.summary||(j.state=='late'||j.state=='failed')&&j.last_ok_ms){const r2=jt.insertRow();
+   r2.innerHTML='<td></td><td class="l" colspan="2"><small>'+esc(j.summary||'')+((j.state=='late'||j.state=='failed')?' (last success '+ago(j.last_ok_ms)+')':'')+'</small></td>'}}
+ const dt=$('daily');while(dt.rows.length>1)dt.deleteRow(1);
+ if(!D.daily.length){dt.insertRow().innerHTML='<td colspan="7" class="l"><small>No days archived yet.</small></td>'}
+ const f=v=>v==null?'-':Math.round(v);
+ for(const d of D.daily){dt.insertRow().innerHTML='<td>'+esc(d.local_date.slice(5))+'</td><td>'+f(d.night_hue)+'°</td><td>'+f(d.peak_hue)+
+  '°</td><td>'+f(d.swing)+'°</td><td>'+esc(d.rise_t90_local||'-')+'</td><td>'+(d.peak_minutes!=null?Math.round(d.peak_minutes/6)/10+' h':'-')+'</td><td>'+(d.alerts_n||0)+'</td>'}
+}
+function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext('2d'),dpr=window.devicePixelRatio||1;
+ c.width=w*dpr;c.height=H*dpr;x.scale(dpr,dpr);x.clearRect(0,0,w,H);
+ const cs=getComputedStyle(document.body),fg=cs.color,mut=cs.getPropertyValue('--mut'),band=cs.getPropertyValue('--band'),bad=cs.getPropertyValue('--bad');
+ x.font='10px system-ui';x.fillStyle=mut;
+ if(!S||!S.t.length){x.fillText('no readings in the last 48 h',10,20);return}
+ const L=34,R=w-8,top=8,ph=160,sTop=top+ph+14,sh=34,t1=D.now_ms,t0=t1-D.window_h*3600e3;
+ const X=t=>L+(t-t0)/(t1-t0)*(R-L);
+ const vals=[...S.hue,...S.lo,...S.hi].filter(v=>v!=null);let lo=Math.min(...vals),hi=Math.max(...vals);
+ const pad=Math.max(4,(hi-lo)*.08);lo-=pad;hi+=pad;
+ const Y=v=>top+(v-lo)/(hi-lo)*ph;   // inverted: low hue (more CO2) at the top
+ // light: a lane between the plot and the score strip, height = dimmer level
+ const lTop=top+ph+3,lh=8;x.fillStyle='rgba(224,160,32,.75)';
+ S.t.forEach((t,i)=>{const v=S.light_pct[i];if(!v)return;const xa=X(t),xb=i+1<S.t.length?X(S.t[i+1]):R;x.fillRect(xa,lTop+lh*(1-v/100),Math.max(xb-xa,1),lh*v/100)});
+ // grid: local midnight and every 6 h
+ x.strokeStyle='rgba(128,128,128,.25)';x.lineWidth=1;
+ const d0=new Date(t0);d0.setMinutes(0,0,0);for(let t=d0.getTime();t<=t1;t+=3600e3){const h=new Date(t).getHours();if(h%6)continue;
+  x.beginPath();x.moveTo(X(t),top);x.lineTo(X(t),sTop+sh);x.setLineDash(h?[2,3]:[]);x.stroke();x.setLineDash([]);
+  if(X(t)>L+8&&X(t)<R-10){x.fillStyle=mut;x.fillText(h?String(h).padStart(2,'0'):new Date(t).toLocaleDateString([], {weekday:'short'}),X(t)-8,sTop+sh+12)}}
+ // leaflet bands as reference lines
+ let lastY=-99;for(const b of [...(D.bands||[])].sort((a,b)=>a.hue-b.hue)){if(b.hue==null||b.hue<lo||b.hue>hi)continue;const y=Y(b.hue);
+  x.strokeStyle=BC[b.name];x.globalAlpha=.6;x.setLineDash([4,4]);x.beginPath();x.moveTo(L,y);x.lineTo(R,y);x.stroke();x.setLineDash([]);x.globalAlpha=1;
+  if(y-lastY>=11){x.fillStyle=BC[b.name];x.fillText(b.co2+' mg/l',R-44,y-3);lastY=y}}
+ // normal band
+ x.fillStyle=band;let seg=[];const flush=()=>{if(seg.length>1){x.beginPath();seg.forEach(([t,a],k)=>k?x.lineTo(X(t),Y(a)):x.moveTo(X(t),Y(a)));
+  for(let k=seg.length-1;k>=0;k--)x.lineTo(X(seg[k][0]),Y(seg[k][2]));x.closePath();x.fill()}seg=[]};
+ S.t.forEach((t,i)=>{const a=S.lo[i],b=S.hi[i];if(a==null||b==null){flush();return}seg.push([t,Math.max(lo,a),Math.min(hi,b)])});flush();
+ x.strokeStyle='rgba(46,139,87,.6)';x.setLineDash([3,3]);line(S.normal);x.setLineDash([]);
+ // the reading
+ x.strokeStyle=fg;x.lineWidth=1.6;line(S.hue);x.lineWidth=1;
+ function line(arr){x.beginPath();let pen=0;S.t.forEach((t,i)=>{const v=arr[i];if(v==null){pen=0;return}pen?x.lineTo(X(t),Y(v)):x.moveTo(X(t),Y(v));pen=1});x.stroke()}
+ // y labels (hue)
+ x.fillStyle=mut;for(const v of [lo+pad,(lo+hi)/2,hi-pad]){x.fillText(Math.round(v)+'°',0,Y(v)+3)}
+ x.fillText('more CO2 ↑',L+4,top+10);
+ // score strip
+ const sm=Math.max(1.5,...S.score.filter(v=>v!=null)),SY=v=>sTop+sh-Math.min(v,sm)/sm*sh;
+ x.fillStyle='rgba(128,128,128,.08)';x.fillRect(L,sTop,R-L,sh);
+ x.strokeStyle=bad;x.globalAlpha=.5;x.setLineDash([3,3]);x.beginPath();x.moveTo(L,SY(S.threshold));x.lineTo(R,SY(S.threshold));x.stroke();x.setLineDash([]);x.globalAlpha=1;
+ x.fillStyle=bad;x.beginPath();x.moveTo(X(S.t[0]),sTop+sh);S.t.forEach((t,i)=>x.lineTo(X(t),SY(S.score[i]||0)));x.lineTo(X(S.t[S.t.length-1]),sTop+sh);x.closePath();
+ x.globalAlpha=.55;x.fill();x.globalAlpha=1;x.fillStyle=mut;x.fillText('score',0,sTop+sh/2+3);x.fillText('1.0',R-16,SY(S.threshold)-2)}
+async function load(){try{const r=await fetch('api/status');if(!r.ok)throw new Error('HTTP '+r.status);D=await r.json();render()}
+ catch(e){$('errs').innerHTML='<div class="msg">Status not available: '+esc(e.message)+'</div>'}}
+load();setInterval(load,60000);addEventListener('resize',()=>D&&draw());
+</script></body></html>

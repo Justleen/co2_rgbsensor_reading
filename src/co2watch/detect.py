@@ -183,6 +183,7 @@ def baseline_scores(df: pd.DataFrame, cfg: DetectConfig,
     out["baseline_hue"] = raw.rolling(f"{cfg.persist_min}min", min_periods=1).min() \
         .where(raw.notna())
     out["hue_now"], out["hue_normal"], out["hue_dev"] = hue, med, dev
+    out["hue_allowed"] = allowed.where(ok)    # |dev| at which baseline_hue reaches 1.0
 
     if "ambient_clear" in df:
         amb = df["ambient_clear"].rolling("30min", min_periods=3).median()
@@ -327,6 +328,27 @@ def detect(df: pd.DataFrame, cfg: DetectConfig | None = None,
     s["kind"] = rule_kind.fillna(kind).where(s["score"] > 0)
     alerts = _make_alerts(s, df, cfg)
     return Detection(scores=s, alerts=alerts, daily=summ)
+
+
+MODEL_VERSION = "m2-rules-baseline"
+
+
+def log_alerts(con, det: "Detection", now: pd.Timestamp, since_hours: float = 2.0
+               ) -> list[tuple[int, bool, pd.Series]]:
+    """Write the alerts that were active in the last ``since_hours`` (and already
+    known at ``now``) to the SQLite alert log, merging into open ones.
+    Returns (alert id, created, alert row) per logged alert."""
+    from . import db
+    since = now - pd.Timedelta(hours=since_hours)
+    out = []
+    for _, al in det.alerts.iterrows():
+        if al["end"] < since or al["known_at"] > now:
+            continue
+        i, created = db.upsert_alert(con, al["start"], al["end"], al["score"], al["kind"],
+                                     al["reason"], model_version=MODEL_VERSION,
+                                     details=al["details"])
+        out.append((i, created, al))
+    return out
 
 
 def _make_alerts(s: pd.DataFrame, df: pd.DataFrame, cfg: DetectConfig) -> pd.DataFrame:

@@ -10,11 +10,12 @@ below are for when you decide to.
 | Namespace | `co2watch` | own namespace, Pod Security `restricted`; kept on uninstall |
 | PersistentVolumeClaim | `co2watch-data` | RWO volume holding `/data/co2watch.sqlite` and `/data/backups/`; kept on uninstall |
 | ConfigMap | `co2watch-env` | VM URL, DB path, time zone |
-| Deployment | `co2watch-toolbox` | 1 pod that holds the volume; creates the schema on start (init container); use it for labels, calibration events and `sqlite3` |
+| Deployment | `co2watch-toolbox` | 1 pod that holds the volume; creates the schema on start (init container); use it for labels, calibration events and `sqlite3`. It also serves the status page (`co2watch serve`) |
+| Service | `co2watch-web` | NodePort 30880 to the toolbox: status page at `http://<node IP>:30880/` (needs image 0.4.0+) |
 | CronJob | `co2watch-calibrate` | daily 10:30 local: anchors + fit from the last 21 days, saved to SQLite |
 | CronJob | `co2watch-archive` | daily 02:30 local: hourly/daily aggregates and raw windows around alerts/labels into SQLite (long-term store) |
 | CronJob | `co2watch-backup` | daily 03:45 local: consistent SQLite copy, keeps 14 |
-| CronJob | `co2watch-score` | every 5 min (M2): runs detection and logs alerts; **off** by default, enable with `--set jobs.score.enabled=true` once image 0.3.0 is loaded |
+| CronJob | `co2watch-score` | every 5 min (M2): runs detection and logs alerts; **off**, because the toolbox's score loop (`web.scoreEverySeconds: 300`) does the same without starting a pod each time |
 | CronJob | `co2watch-train` | weekly Monday 04:00 (M3/M4), **off** until `co2watch train` exists |
 
 ```mermaid
@@ -22,7 +23,7 @@ flowchart LR
   subgraph lap1
     VM[(VictoriaMetrics<br/>monitoring ns)]
     subgraph ns["namespace co2watch"]
-      TB[toolbox pod<br/>kubectl exec]
+      TB[toolbox pod<br/>kubectl exec<br/>+ status page]
       CAL[CronJob calibrate]
       BK[CronJob backup]
       SC[CronJob score<br/>M2]
@@ -30,7 +31,7 @@ flowchart LR
       PVC[(PVC co2watch-data<br/>SQLite file)]
     end
   end
-  VM --> CAL & SC & TR
+  VM --> CAL & SC & TR & TB
   TB & CAL & BK & SC & TR --- PVC
 ```
 
@@ -111,3 +112,28 @@ backup decision (Longhorn backup, or a copy to the pi1 backup volume); copying
 | `database is locked` after 30 s | a long job holds the write lock; check overlapping manual jobs |
 | calibrate job fails with connection refused | `vm.url` wrong; test from the toolbox: `python -c "import urllib.request;print(urllib.request.urlopen('$VM_URL/health').read())"` |
 | CronJob ignores time zone | k3s older than 1.27; upgrade, or write schedules in UTC |
+
+## Status page
+
+The toolbox pod runs `co2watch serve`, exposed by Service `co2watch-web` on NodePort 30880 (`http://lap1.fritz.box:30880/`,
+or any node IP). It shows the estimated CO2 now, the last 48 h of the drop
+checker against the learned per-time-of-day normal band, the alert log with
+reasons, the last run of every job and the daily shape from the archive.
+
+* Cost: the JSON behind it is recomputed at most every 120 s
+  (`web.cacheSeconds`) and only while a browser has the page open (it polls
+  once a minute). Each recompute reads 16 days from VictoriaMetrics and runs
+  detection once; the toolbox limit is 512 Mi for that.
+* `kubectl exec` into the toolbox works as before. There is no liveness
+  probe, so the page can never restart the pod under an open session.
+* Job status comes from the `job_runs` table: every `calibrate`, `score`,
+  `archive` and `backup` run records its start, end, result and a one-line
+  summary. A daily job without a success for 36 h shows as late.
+* With `web.scoreEverySeconds` (default 300) the same process is also the
+  scorer: every 5 minutes it runs detection, logs alerts and records a `score`
+  job run, and the page shows that result. A hung loop shows as a late `score`
+  job on the page.
+* The page itself never writes labels. Turn it off with `--set web.enabled=false`
+  (the toolbox then just sleeps, as before),
+  or use `web.service.type=ClusterIP` behind your own ingress.
+

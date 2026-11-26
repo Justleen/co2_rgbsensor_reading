@@ -66,9 +66,27 @@ containerSecurityContext:
 #   kubectl -n co2watch exec -it deploy/co2watch-toolbox -- sqlite3 /data/co2watch.sqlite
 toolbox:
   enabled: true
-  resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 256Mi}
+  resources:            # sized for the status page it also serves
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
+# --- Status page ----------------------------------------------------------------
+# The toolbox pod also runs `co2watch serve`: one small page with the drop checker
+# over the last 48 h and its learned normal band, alerts with their reasons, job
+# runs and the daily shape. Read-only; recomputes at most every cacheSeconds
+# while someone looks. On the LAN at http://<any node IP>:<nodePort>/.
+# enabled: false = the toolbox just sleeps, as before. Needs image 0.4.0+.
+web:
+  enabled: true
+  port: 8080
+  cacheSeconds: 120
+  # The same process also runs detection every N seconds and logs alerts
+  # (what the score CronJob below would do, without starting a pod each time).
+  # 0 = off. Keep jobs.score disabled while this is on.
+  scoreEverySeconds: 300
+  service:
+    type: NodePort       # or ClusterIP behind your own ingress
+    nodePort: 30880
 
 # --- Scheduled jobs -------------------------------------------------------------
 # Each entry becomes a CronJob. Schedules are in `timezone`.
@@ -105,7 +123,8 @@ jobs:
     schedule: "45 3 * * *"
     args: ["backup", "--db", "$(DB)", "--dir", "$(BACKUP_DIR)", "--keep", "14"]
   # M2: score the last 16 days every 5 minutes and log alerts (docs/detection.md).
-  # Off by default; needs image 0.3.0 or later.
+  # Off: the toolbox's score loop (web.scoreEverySeconds) does this now. Only
+  # enable it with web.enabled=false or web.scoreEverySeconds=0.
   score:
     enabled: false
     schedule: "*/5 * * * *"
