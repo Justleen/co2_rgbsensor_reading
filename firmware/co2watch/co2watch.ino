@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.4.5"
+#define FW_VERSION "0.4.6"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -323,15 +323,17 @@ void schedSave() {
   EEPROM.commit();
 }
 
+// The schedule always runs after a boot (power cut, reset, OTA), so the light
+// never stays stuck at a manual level. Switching it off on the page lasts until
+// the next reboot.
 void schedLoad() {
   memcpy(sched, SCHED_DEFAULT, sizeof sched);
-  schedEnabled = false;
+  schedEnabled = true;
   if (EEPROM.read(16) != EEPROM_SCHED_MAGIC) return;
   SchedPoint p[8];
   EEPROM.get(18, p);
   if (!schedValid(p)) return;
   memcpy(sched, p, sizeof sched);
-  schedEnabled = EEPROM.read(17) == 1;
 }
 
 // Called every second.

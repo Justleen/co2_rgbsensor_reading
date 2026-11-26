@@ -22,7 +22,8 @@ drop checker and drives the light dimmer.
   stored in flash and restored at boot. During a reset D6 is low, so the light
   drops to its minimum for about a second.
 
-- Light schedule (off until enabled on the page; default: 100 % from 11:00 to 18:00,
+- Light schedule (always on after a boot; switching it off on the page lasts until
+  the next reboot; default: 100 % from 11:00 to 18:00,
   30 % until 20:30, off by 21:30): 8 points (24-hour HH:MM +
   level), each fading to the next one (smooth cosine, linear or step), wrapping
   at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).
