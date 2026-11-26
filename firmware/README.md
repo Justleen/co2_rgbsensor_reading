@@ -27,7 +27,7 @@ drop checker and drives the light dimmer.
   back to the defaults in the sketch.
 
 - Light schedule (always runs; default: 4 % at 07:00, 18 % at 09:00, 40 % at 09:50, 100 % from 11:00 to 18:00,
-  40 % at 18:30, 25 % at 19:55, off by 21:30): 8 points (24-hour HH:MM +
+  40 % at 18:30, 25 % at 19:55, off by 21:00): 8 points (24-hour HH:MM +
   level), each fading to the next one (smooth cosine, linear or step), wrapping
   at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).
   A manual change pauses the schedule for 1 hour; without a valid time the
@@ -36,7 +36,7 @@ drop checker and drives the light dimmer.
 - CO2 index (v0.6.0): zooms into the drop checker's colour band. The hue
   (average of the last 3 readings) is mapped so a "low" hue = 0 % and a "high"
   hue = 100 % (`co2watch_co2_index_percent`, not clamped). Default ends are
-  203 deg (leaflet 3 mg/l) and 153.5 deg (set on the D1 on 2026-11-26), not yet
+  203 deg (leaflet 3 mg/l) and 69 deg (set on the D1 on 2026-11-26), not yet
   calibrated over a full day: set the ends on the page ("Set low = now" when the checker is fully
   blue). Ends stored in flash; API `/api/co2index?low=&high=` (deg or `now`).
   Raw counts are unchanged.

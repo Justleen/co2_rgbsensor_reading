@@ -51,7 +51,7 @@ static const uint8_t DIM_PIN = D6;          // GPIO12
 static const uint32_t DIM_PWM_HZ = 1000;    // converter accepts 22 Hz - 20 kHz
 
 // ---- CO2 index (defaults: leaflet 3 mg/l hue; High as set on the D1) -------
-static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 153.5;
+static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 69;
 static const uint8_t IDX_SMOOTH = 3;  // readings averaged (3 x 5 min)
 
 // ---- schedule ---------------------------------------------------------------
@@ -60,11 +60,11 @@ static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // "Set to max" hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default = the schedule saved on the D1 on 2026-11-26 19:03 (7 h at 100 %
-// 11:00-18:00; 18 % at 09:00, 40 % at 09:50; 40 % at 18:30, 25 % at 19:55, off 21:30).
+// Default = the schedule saved on the D1 on 2026-11-26 23:08 (7 h at 100 %
+// 11:00-18:00; 18 % at 09:00, 40 % at 09:50; 40 % at 18:30, 25 % at 19:55, off 21:00).
 static const SchedPoint SCHED_DEFAULT[8] = {
     {420, 4, 1},    {540, 18, 0},  {590, 40, 0},  {660, 100, 0},
-    {1080, 100, 0}, {1110, 40, 0}, {1195, 25, 0}, {1290, 0, 1}};
+    {1080, 100, 0}, {1110, 40, 0}, {1195, 25, 0}, {1260, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;

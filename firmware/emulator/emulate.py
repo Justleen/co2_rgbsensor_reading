@@ -47,7 +47,7 @@ OVERRIDE_S = 3600
 # 30 % by 19:00, hold 30 % until 20:30, then fade to 0 % by 21:30.
 # The firmware default still peaks at 10:00.
 SCHED_DEFAULT = [[420, 4, 1], [540, 18, 0], [590, 40, 0], [660, 100, 0],
-                 [1080, 100, 0], [1110, 40, 0], [1195, 25, 0], [1290, 0, 1]]
+                 [1080, 100, 0], [1110, 40, 0], [1195, 25, 0], [1260, 0, 1]]
 ATIME, GAIN = 0xC0, 4
 MAX_COUNT = min((256 - ATIME) * 1024, 65535)
 
@@ -69,7 +69,7 @@ class Board:
         self.override_until = None
         self.source = "safe"
         self.posts = 0
-        self.idx_low, self.idx_high = 203.0, 153.5   # CO2 index ends (firmware defaults)
+        self.idx_low, self.idx_high = 203.0, 69.0   # CO2 index ends (firmware defaults)
         self.hue_hist = []
         # Relay preview (mockup only; the firmware has no relay code yet).
         self.relays = {"co2": True, "air": False, "heat": False, "pump": True}
@@ -390,7 +390,7 @@ def make_handler(board):
                         else:
                             hi = x
                 if "reset" in q:
-                    lo, hi = 203.0, 153.5
+                    lo, hi = 203.0, 69.0
                 if abs(lo - hi) < 1:
                     self.send(400, "low and high hue must differ\n", "text/plain")
                     return
