@@ -9,13 +9,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-
 main{max-width:480px;margin:0 auto;padding:16px}
 section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
 h1{font-size:20px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 10px}
-#sw{height:110px;border-radius:8px;border:1px solid var(--bd);background:#000}
+#sw{flex:1 1 40px;min-width:40px;height:28px;border-radius:6px;border:1px solid var(--bd);background:#000}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .big{font-size:22px;font-variant-numeric:tabular-nums}
 small,.mut{color:var(--mut)}input[type=range]{flex:1;min-width:160px}
 button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer;transition:transform .08s,filter .08s,background .2s}
 button:hover{filter:brightness(.95)}button:active{transform:scale(.94);filter:brightness(.8)}button:disabled{opacity:.6;cursor:wait}
-.b3{flex-wrap:nowrap;gap:6px;align-items:stretch}.b3 button{flex:1 1 0;min-width:0;padding:6px 4px;font-size:13px;line-height:1.2}
+.b3{flex-wrap:nowrap;gap:6px;align-items:stretch}.ends{flex-wrap:nowrap}.ends label{display:flex;align-items:center;gap:6px;flex:1 1 0;min-width:0}.ends input{flex:1 1 0;min-width:0;width:100%;font:inherit;padding:5px 6px}.b3 button{flex:1 1 0;min-width:0;padding:6px 4px;font-size:13px;line-height:1.2}
 .rl{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .rl label{display:flex;align-items:center;gap:8px;cursor:pointer}
 .sw{position:relative;width:46px;height:26px;flex:none}.sw input{opacity:0;width:0;height:0;position:absolute}
@@ -29,20 +29,20 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 </style></head><body><div id="toast" role="status" aria-live="polite"></div><main>
 <h1>co2watch <small id="ver"></small></h1>
 <section><h2>Drop checker colour</h2>
-<div id="sw"></div>
-<div class="row" style="margin-top:10px"><span class="big" id="hex">-</span><span class="big" id="hue">-</span></div>
+<div class="row" style="margin-top:10px"><span class="big" id="hex">-</span><span id="sw"></span></div>
 <small id="info">loading...</small>
 <div class="row b3" style="margin-top:10px"><button onclick="act('/read')">Take reading now</button>
 <button onclick="if(confirm('Use the current reading as white? Do this with the sensor on the white backing.'))act('/white?set=1')">Use as white reference</button>
 <button onclick="act('/white?reset=1')">Reset white</button></div>
 <div id="idxbox" style="display:none;margin-top:14px;border-top:1px solid var(--bd);padding-top:10px">
-<div class="row"><b>CO2 index</b><span class="big" id="idxv">-</span></div>
-<div style="position:relative;height:16px;border-radius:8px;margin:6px 0;background:linear-gradient(90deg,#2f6fd6,#2bb3a0,#3cb043,#c8d630,#e8d020)">
+<div class="row"><b>CO2 index</b><small id="idxwarn" style="color:#c62828"></small></div>
+<div style="position:relative;height:16px;margin:4px 0 0"><small class="mut" id="idxv" style="position:absolute;bottom:0;left:0;white-space:nowrap">-</small></div>
+<div style="position:relative;height:16px;border-radius:8px;margin:4px 0 6px;background:linear-gradient(90deg,#2f6fd6,#2bb3a0,#3cb043,#c8d630,#e8d020)">
 <div id="idxm" style="position:absolute;top:-3px;width:4px;height:22px;margin-left:-2px;background:var(--fg);border-radius:2px;left:0"></div></div>
-<div class="row mut" style="justify-content:space-between;font-size:12px"><span>0 % = low (blue)</span><span>100 % = high</span></div>
-<small id="idxinfo" class="mut"></small>
-<div class="row b3" style="margin-top:6px"><button onclick="act('/api/co2index?low=now')">Set low = now</button>
-<button onclick="act('/api/co2index?high=now')">Set high = now</button><button onclick="act('/api/co2index?reset=1')">Default ends</button></div></div>
+<div class="row mut" style="justify-content:space-between;font-size:12px"><span>0%</span><span>50%</span><span>100%</span></div>
+<div class="row ends" style="margin-top:8px"><label>Low <input type="number" id="idxlo" step="0.1"></label>
+<label>High <input type="number" id="idxhi" step="0.1"></label><button onclick="idxSet()">Set</button></div>
+<small class="mut" id="idxcur"></small></div>
 </section>
 <section><h2>Light</h2>
 <div class="row"><button onclick="act('/dimmer?level=100')">Set to max</button><button onclick="sch('resume=1')">Run schedule</button></div>
@@ -159,9 +159,11 @@ async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
  catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
 let idxEdit=0;
 function showIdx(x){const box=$('idxbox');if(!x){box.style.display='none';return}box.style.display='';
- $('idxv').textContent=x.ok?x.value.toFixed(1)+' %':'-';$('idxm').style.left=Math.max(0,Math.min(100,x.ok?x.value:0))+'%';
- $('idxinfo').textContent=x.ok?('hue '+x.hue.toFixed(1)+'° (avg of '+x.n+'), low '+x.low.toFixed(1)+'°, high '+x.high.toFixed(1)+'°'+(x.value<0||x.value>100?' — outside the range':'')):'waiting for a reading';
+ {const e=$('idxv'),p=Math.max(0,Math.min(100,x.ok?x.value:0));e.textContent=x.ok?x.value.toFixed(1)+' %':'-';e.style.left=p+'%';e.style.transform='translateX('+(p<8?'0':p>92?'-100%':'-50%')+')'}$('idxwarn').textContent=x.ok&&(x.value<0||x.value>100)?'outside the range':'';$('idxm').style.left=Math.max(0,Math.min(100,x.ok?x.value:0))+'%';
+ $('idxcur').textContent=x.ok?'Current: '+x.hue.toFixed(1)+'° hue':'Current: waiting for a reading';
+ for(const[k,v]of[['idxlo',x.low],['idxhi',x.high]]){const e=$(k);if(document.activeElement!==e&&e.dataset.v!=String(v)){e.value=v.toFixed(1);e.dataset.v=v}}
 }
+function idxSet(){act('/api/co2index?low='+encodeURIComponent($('idxlo').value)+'&high='+encodeURIComponent($('idxhi').value))}
 function show(s){
  showIdx(s.co2idx);
  showRelays(s.relays,s.relay_src);
@@ -169,7 +171,6 @@ function show(s){
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';
- $('hue').textContent=s.colour.ok?'hue '+s.colour.hue.toFixed(1)+'°':'';
  $('info').textContent=s.seq?('reading #'+s.seq+', '+s.age+' s ago'+(s.saturated?', SATURATED':'')+', i2c errors '+s.i2c_errors):'no reading yet';
 
  const src={manual:'manual',schedule:'following the schedule',override:'max, schedule resumes in '+Math.ceil(s.dim.override_left/60)+' min',safe:'no time yet: safe level'}[s.dim.source];
