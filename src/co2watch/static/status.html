@@ -17,7 +17,7 @@ small,.mut{color:var(--mut)}
 .kv div{font-variant-numeric:tabular-nums}.kv small{display:block}
 .msg{margin-top:8px;padding:6px 10px;border-radius:6px;font-size:13px;background:#f6dcdc;color:#7a1f1f}
 .msg.info{background:#fff3d6;color:#5a4300}
-canvas{width:100%;display:block}
+canvas{width:100%;height:230px;display:block}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
 td,th{text-align:right;padding:3px 6px;vertical-align:top}th{font-weight:600;color:var(--mut)}
 th:first-child,td:first-child{text-align:left}td.l{text-align:left}
@@ -34,10 +34,10 @@ th:first-child,td:first-child{text-align:left}td.l{text-align:left}
 <div class="row"><span class="sw" id="sw"></span><span class="big" id="co2">-</span><span id="state"></span></div>
 <small id="co2sub"></small>
 <div class="kv">
-<div><small>Sensor hue</small><span id="hue">-</span></div>
+<div><small>Sensor hue · CO2 index</small><span id="hue">-</span></div>
 <div><small>Normal for this time</small><span id="norm">-</span></div>
 <div><small>Anomaly score</small><span id="score">-</span></div>
-<div><small>D1 CO2 index</small><span id="idx">-</span></div>
+<div><small>D1's own CO2 index</small><span id="idx">-</span></div>
 <div><small>Light</small><span id="light">-</span></div>
 <div><small>Last reading</small><span id="age">-</span></div>
 </div>
@@ -51,6 +51,7 @@ th:first-child,td:first-child{text-align:left}td.l{text-align:left}
 <span><i style="background:rgba(224,160,32,.75)"></i>light</span>
 <span><i style="border-top:2px dashed #3cb043;height:0"></i>leaflet bands</span>
 <span><i style="background:var(--bad)"></i>anomaly score</span></div>
+<small id="idxnote"></small>
 </section>
 
 <section><h2>Alerts</h2><div id="alerts"><small>loading…</small></div></section>
@@ -60,9 +61,11 @@ th:first-child,td:first-child{text-align:left}td.l{text-align:left}
 
 <section><h2>Daily shape</h2>
 <table id="daily"><tr><th>day</th><th>night</th><th>peak</th><th>swing</th><th>90 % at</th><th>near peak</th><th>alerts</th></tr></table>
-<small>Sensor hue; lower is more CO2. Filled in nightly by the archive job.</small></section>
+<small>Sensor hue and CO2 index %; lower hue / higher % is more CO2. Filled in nightly by the archive job.</small></section>
 </main><script>
 const $=id=>document.getElementById(id);let D=null;
+const P=h=>{const m=D&&D.index;return m&&h!=null?Math.round(m.a+m.b*h):null};   // hue -> CO2 index %, not clamped
+const hp=h=>h==null?'-':h+'°'+(P(h)!=null?' · '+P(h)+' %':'');
 const BC={'blue':'#2f6fd6','blue-green':'#2b9fb3','teal-green':'#2bb3a0','green':'#3cb043','lime':'#c8d630'};
 const KIND={dropout:'No readings',stuck:'Sensor stuck',saturated:'Sensor saturated',config:'Sensor settings changed',
  led_fail:'LED / sensor signal lost',clear_jump:'Signal jumped',baseline_hue:'Colour off its normal',
@@ -87,18 +90,20 @@ function render(){
    $('sw').style.background=BC[L.band]||'#888'}
   else{$('co2').textContent=L.hue!=null?L.hue+'°':'-';$('co2sub').textContent='no calibration yet'}
   $('state').innerHTML=scorePill(L.score)+(L.score>=1&&L.kind?' <small>'+esc(KIND[L.kind]||L.kind)+'</small>':'');
-  $('hue').textContent=L.hue!=null?L.hue+'°':'-';
-  $('norm').textContent=L.normal_hue!=null?L.normal_hue+'°':'learning';
+  $('hue').textContent=hp(L.hue);
+  $('norm').textContent=L.normal_hue!=null?hp(L.normal_hue):'learning';
   $('score').textContent=L.score!=null?L.score.toFixed(2)+' / 1.00':'-';
   $('idx').textContent=L.co2_index_pct!=null?L.co2_index_pct+' %':'-';
   $('light').textContent=L.light_pct!=null?L.light_pct+' %':'-';
   $('age').textContent=ago(L.ts_ms)+(L.i2c_errors?' · '+L.i2c_errors+' I2C errors':'')+(L.saturated?' · saturated':'')}
  const g=D.learning;$('learn').innerHTML=g&&!g.ready?'<div class="msg info">Still learning what normal looks like: '+
   g.days+' of '+g.needed+' days'+(g.since_ms?' since the last fluid change':'')+'. Until then only the hard sensor checks can alert.</div>':'';
+ const m=D.index;$('idxnote').textContent=m?'CO2 index % uses the D1\'s scale ('+(m.method=='fit'?'fitted to the D1\'s index, r² '+m.r2:'from '+m.source)+
+  ': '+m.low_hue+'° = 0 %, '+m.high_hue+'° = 100 %) and can go below 0 % or above 100 %.':'';
  draw();
  $('alerts').innerHTML=D.alerts.length?D.alerts.map(a=>'<div class="al"><div class="row"><b>'+esc(KIND[a.kind]||a.kind)+'</b>'+
   (a.open?'<span class="pill bad">open</span>':'')+'<small>'+fmt(a.start_ms)+(a.end_ms?' – '+hhmm(a.end_ms):'')+' · score '+(a.score??0).toFixed(2)+'</small></div>'+
-  '<p>'+esc(a.reason)+'</p></div>').join(''):'<small>No alerts logged.</small>';
+  '<p>'+esc(a.reason)+(a.index_note?' <small>('+esc(a.index_note)+')</small>':'')+'</p></div>').join(''):'<small>No alerts logged.</small>';
  const jt=$('jobs');while(jt.rows.length>1)jt.deleteRow(1);
  for(const j of D.jobs){const r=jt.insertRow(),st={ok:'ok',late:'warn',failed:'bad',running:'warn',never:''}[j.state];
   const lab={ok:'ok',late:'late',failed:j.fails_since_ok>1?'failed ×'+j.fails_since_ok:'failed',running:'running',never:'never run'}[j.state];
@@ -107,16 +112,18 @@ function render(){
    r2.innerHTML='<td></td><td class="l" colspan="2"><small>'+esc(j.summary||'')+((j.state=='late'||j.state=='failed')?' (last success '+ago(j.last_ok_ms)+')':'')+'</small></td>'}}
  const dt=$('daily');while(dt.rows.length>1)dt.deleteRow(1);
  if(!D.daily.length){dt.insertRow().innerHTML='<td colspan="7" class="l"><small>No days archived yet.</small></td>'}
- const f=v=>v==null?'-':Math.round(v);
- for(const d of D.daily){dt.insertRow().innerHTML='<td>'+esc(d.local_date.slice(5))+'</td><td>'+f(d.night_hue)+'°</td><td>'+f(d.peak_hue)+
-  '°</td><td>'+f(d.swing)+'°</td><td>'+esc(d.rise_t90_local||'-')+'</td><td>'+(d.peak_minutes!=null?Math.round(d.peak_minutes/6)/10+' h':'-')+'</td><td>'+(d.alerts_n||0)+'</td>'}
+ const f=v=>v==null?'-':Math.round(v),two=(a,b)=>a+'<br><small>'+b+'</small>';
+ const ph=h=>h==null?'-':two(f(h)+'°',P(h)!=null?P(h)+' %':'');
+ const sw=v=>v==null?'-':two(f(v)+'°',D.index?Math.round(Math.abs(D.index.b)*v)+' pts':'');
+ for(const d of D.daily){dt.insertRow().innerHTML='<td>'+esc(d.local_date.slice(5))+'</td><td>'+ph(d.night_hue)+'</td><td>'+ph(d.peak_hue)+
+  '</td><td>'+sw(d.swing)+'</td><td>'+esc(d.rise_t90_local||'-')+'</td><td>'+(d.peak_minutes!=null?Math.round(d.peak_minutes/6)/10+' h':'-')+'</td><td>'+(d.alerts_n||0)+'</td>'}
 }
 function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext('2d'),dpr=window.devicePixelRatio||1;
  c.width=w*dpr;c.height=H*dpr;x.scale(dpr,dpr);x.clearRect(0,0,w,H);
  const cs=getComputedStyle(document.body),fg=cs.color,mut=cs.getPropertyValue('--mut'),band=cs.getPropertyValue('--band'),bad=cs.getPropertyValue('--bad');
  x.font='10px system-ui';x.fillStyle=mut;
  if(!S||!S.t.length){x.fillText('no readings in the last 48 h',10,20);return}
- const L=34,R=w-8,top=8,ph=160,sTop=top+ph+14,sh=34,t1=D.now_ms,t0=t1-D.window_h*3600e3;
+ const L=34,R=w-36,top=8,ph=160,sTop=top+ph+14,sh=34,t1=D.now_ms,t0=t1-D.window_h*3600e3;
  const X=t=>L+(t-t0)/(t1-t0)*(R-L);
  const vals=[...S.hue,...S.lo,...S.hi].filter(v=>v!=null);let lo=Math.min(...vals),hi=Math.max(...vals);
  const pad=Math.max(4,(hi-lo)*.08);lo-=pad;hi+=pad;
@@ -142,7 +149,11 @@ function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext(
  x.strokeStyle=fg;x.lineWidth=1.6;line(S.hue);x.lineWidth=1;
  function line(arr){x.beginPath();let pen=0;S.t.forEach((t,i)=>{const v=arr[i];if(v==null){pen=0;return}pen?x.lineTo(X(t),Y(v)):x.moveTo(X(t),Y(v));pen=1});x.stroke()}
  // y labels (hue)
- x.fillStyle=mut;for(const v of [lo+pad,(lo+hi)/2,hi-pad]){x.fillText(Math.round(v)+'°',0,Y(v)+3)}
+ // left: hue; right: CO2 index % with dotted lines at the D1's 0 % and 100 %
+ const refY=[];x.fillStyle=mut;
+ if(D.index){x.strokeStyle='rgba(128,128,128,.35)';x.setLineDash([1,3]);for(const q of [0,100]){const h=(q-D.index.a)/D.index.b;if(h<lo||h>hi)continue;
+  x.beginPath();x.moveTo(L,Y(h));x.lineTo(R,Y(h));x.stroke();x.fillText(q+' %',R+4,Y(h)+3);refY.push(Y(h))}x.setLineDash([])}
+ for(const v of [lo+pad,(lo+hi)/2,hi-pad]){x.fillText(Math.round(v)+'°',0,Y(v)+3);if(P(v)!=null&&refY.every(y=>Math.abs(y-Y(v))>12))x.fillText(P(v)+' %',R+4,Y(v)+3)}
  x.fillText('more CO2 ↑',L+4,top+10);
  // score strip
  const sm=Math.max(1.5,...S.score.filter(v=>v!=null)),SY=v=>sTop+sh-Math.min(v,sm)/sm*sh;

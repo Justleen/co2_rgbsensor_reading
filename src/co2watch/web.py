@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from . import db, vm
-from .config import CHART_KH4, TZ
+from .config import CHART_KH4, CO2_INDEX_DEFAULT_ENDS, TZ
 
 # How often each scheduled job is expected to succeed (hours); a job whose last
 # success is older than 1.5x this is shown as late.
@@ -60,6 +60,67 @@ def _col(df: pd.DataFrame, name: str, nd=2) -> list:
     return [_num(v, nd) for v in df[name].to_numpy()]
 
 
+def index_map(df: pd.DataFrame, fit_days: float = 7) -> dict:
+    """Linear map from sensor hue to the D1's CO2 index %: pct = a + b * hue.
+
+    The D1 computes its index from its own white-balanced hue, which is not the
+    same number as the sensor hue here (LED on minus off frames). So when the D1
+    exports its index, fit the map to it over the last ``fit_days``; the page
+    then shows the same % as the D1. Otherwise use the D1's index ends (or the
+    firmware defaults) directly on the sensor hue. Never clamped: below 0 % and
+    above 100 % are real readings outside the D1's ends.
+    """
+    def ends():
+        lo, hi = CO2_INDEX_DEFAULT_ENDS
+        src = "firmware defaults"
+        if "co2_index_low" in df and df["co2_index_low"].notna().any():
+            lo, hi = float(df["co2_index_low"].dropna().iloc[-1]), \
+                float(df["co2_index_high"].dropna().iloc[-1])
+            src = "the D1's ends"
+        b = -100.0 / (lo - hi)
+        return {"a": _num(-b * lo, 4), "b": _num(b, 5), "method": "ends", "low_hue": _num(lo, 1),
+                "high_hue": _num(hi, 1), "source": src}
+
+    if "co2_index_pct" not in df or "hue" not in df:
+        return ends()
+    recent = df[df.index >= df.index.max() - pd.Timedelta(days=fit_days)]
+    x, y = recent["hue"].to_numpy(float), recent["co2_index_pct"].to_numpy(float)
+    m = np.isfinite(x) & np.isfinite(y)
+    if m.sum() < 288 or np.ptp(x[m]) < 15:   # need a day of data and a real daily swing
+        return ends()
+    b, a = np.polyfit(x[m], y[m], 1)
+    r2 = 1 - np.var(y[m] - (a + b * x[m])) / max(np.var(y[m]), 1e-9)
+    if b >= 0 or r2 < 0.8:
+        return ends()
+    return {"a": _num(a, 4), "b": _num(b, 5), "method": "fit", "r2": _num(r2, 3),
+            "low_hue": _num(-a / b, 1), "high_hue": _num((100 - a) / b, 1),
+            "source": "fitted to the D1's index"}
+
+
+# hue pairs in alert details (detect.explain) -> "<what>: X % vs usual Y %"
+_NOTE_PAIRS = (("hue_now", "hue_normal", "CO2 index"), ("hue_now", "peak_normal", "CO2 index"),
+               ("peak_hue", "peak_normal", "peak"), ("night_hue", "night_normal", "night"))
+
+
+def _index_note(details_json, imap: dict | None) -> str | None:
+    """The hue numbers of a stored alert reason as CO2 index %, for the page."""
+    if not imap or not details_json:
+        return None
+    try:
+        d = json.loads(details_json)
+    except (TypeError, ValueError):
+        return None
+    a, b = imap["a"], imap["b"]
+    for now_k, ref_k, what in _NOTE_PAIRS:
+        if d.get(now_k) is not None and d.get(ref_k) is not None:
+            word = "usual peak" if ref_k == "peak_normal" and now_k == "hue_now" else "usual"
+            return (f"{what}: {a + b * d[now_k]:.0f} % vs {word} {a + b * d[ref_k]:.0f} %")
+    if d.get("swing_now") is not None and d.get("swing_normal") is not None:
+        return (f"swing: {abs(b) * d['swing_now']:.0f} vs usual "
+                f"{abs(b) * d['swing_normal']:.0f} index points")
+    return None
+
+
 def _light(df: pd.DataFrame) -> list:
     """Dimmer level in %, or the on/off state as 0/100 when there is no dimmer series."""
     if "light_pct" in df and df["light_pct"].notna().any():
@@ -86,7 +147,8 @@ def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
 
     errors = list(errors or [])
     out: dict = {"now_ms": _ms(now), "tz": str(TZ), "window_h": window_h, "errors": errors,
-                 "latest": None, "series": None, "learning": None, "bands": []}
+                 "latest": None, "series": None, "learning": None, "bands": [],
+                 "index": None}
     events = [e for e in db.calibration_events(con) if e <= now]
 
     if raw is not None and len(raw):
@@ -160,6 +222,12 @@ def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
                                      "verdict": b.verdict,
                                      "hue": _num((b.chart_hue_deg - fit.a) / fit.b, 1)}
                                     for b in CHART_KH4]
+            imap = index_map(df)
+            out["index"] = imap
+
+            def pct(h):
+                return None if h is None else _num(imap["a"] + imap["b"] * h, 0)
+            latest["hue_pct"], latest["normal_pct"] = pct(hue), pct(latest["normal_hue"])
             out["latest"] = latest
 
             # how far the per-slot normal is in learning it (same epoch only)
@@ -179,6 +247,7 @@ def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
         "id": int(r["id"]), "start_ms": _ms(r["start"]), "end_ms": _ms(r["end"]),
         "kind": r["kind"], "score": _num(r["score"], 2), "reason": r["reason"],
         "open": bool(pd.notna(r["end"]) and r["end"] >= open_after),
+        "index_note": _index_note(r.get("details_json"), out["index"]),
     } for _, r in al.iterrows()]
 
     runs = {r["job"]: r for r in db.last_job_runs(con)}
