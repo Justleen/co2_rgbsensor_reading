@@ -96,8 +96,8 @@ jobs:
     enabled: true
     schedule: "45 3 * * *"
     args: ["backup", "--db", "$(DB)", "--dir", "$(BACKUP_DIR)", "--keep", "14"]
-  # M2: score the latest readings every 5 minutes and log alerts.
-  # Off until the `score` command exists.
+  # M2: score the last 16 days every 5 minutes and log alerts (docs/detection.md).
+  # Off by default; needs image 0.3.0 or later.
   score:
     enabled: false
     schedule: "*/5 * * * *"

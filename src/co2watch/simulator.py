@@ -77,6 +77,10 @@ class TankModel:
     checker_lag_h: float = 1.5
     water_change_frac: float = 0.10
     water_change_co2: float = 3.0  # mg/l in the fresh water
+    # Day-to-day variation of a healthy tank: CO2 injection (bubble rate, plant
+    # uptake) varies by this fraction (1 sd) from day to day. Real tanks vary;
+    # without it every normal day is identical and detection looks too easy.
+    day_jitter: float = 0.08
 
 
 @dataclass
@@ -133,6 +137,8 @@ def simulate(
     solenoid = _in_window(hour, sch.co2_on, sch.co2_off)
     airstone = ~_in_window(hour, sch.co2_on, sch.lights_off)
     inject_mult = np.ones(n)
+    day_factor = 1 + tank.day_jitter * rng.standard_normal(days + 2)
+    inject_mult *= np.clip(day_factor, 0.6, 1.4)[day_idx]
 
     labels: list[dict] = []
     ageing_reset_at: list[int] = []
@@ -169,8 +175,7 @@ def simulate(
             inject_mult[m] *= decline[m]
             after = day_idx >= a.day + a.duration_days
             inject_mult[after] *= 1.0 - 0.55 * a.magnitude
-            # visible once the decline exceeds ~20 %
-            s = local_ts(a.day + 0.35 * a.duration_days, sch.co2_on)
+            s = local_ts(a.day, sch.co2_on)
             e = local_ts(days, 0)
         elif a.kind == "fluid_change":
             s = e = local_ts(a.day, a.hour)
@@ -253,6 +258,11 @@ def simulate(
     df["co2_on"] = solenoid
     df["airstone_on"] = airstone
     df["temperature"] = 24.5 + 0.6 * lights + 0.1 * rng.standard_normal(n)
+    # sensor health series as the firmware exposes them
+    df["seq"] = np.arange(n, dtype=float)
+    df["i2c_errors"] = 0.0
+    df["atime"] = 192.0
+    df["gain"] = 4.0
 
     # --- sensor faults on the raw output -----------------------------
     for a in anomalies:

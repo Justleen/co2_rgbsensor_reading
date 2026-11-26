@@ -17,7 +17,7 @@ on, LEDs switched through a PCF8574).
 |---|---|
 | Detection | Classical ML only: hard-fault rules, a per-time-of-day robust baseline, then Isolation Forest. A forecaster is only tried if those miss cases. |
 | LLM | Not in the plan. Alerts carry templated reasons written by the detectors. |
-| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1. Target retention 5 years and image pinned to v1.156.0: edited in the k3s repo manifest, **not applied to the cluster yet**. |
+| Raw data store | VictoriaMetrics (VM) on the k3s cluster, pinned to lap1, 90-day retention (a 5-year retention was considered and dropped on 2026-11-26). |
 | Other storage | SQLite: labels, model registry, calibration events, alert log, cached daily anchors. |
 | Ingest | The D1 mini serves `/metrics`; VM scrapes it. No Home Assistant, no Influx, no push. The sensor and the aquarium controller share one D1. |
 | Notifications | None for now. Alerts are logged; labelling is done with the CLI or the notebook. |
@@ -37,7 +37,7 @@ flowchart LR
   end
 
   subgraph K3S["k3s cluster"]
-    VM[(VictoriaMetrics<br/>lap1, 5y retention)]
+    VM[(VictoriaMetrics<br/>lap1, 90d retention)]
     subgraph ML["co2watch container"]
       SC[scorer<br/>every 5 min]
       TR[trainer<br/>weekly CronJob + on demand]
@@ -78,8 +78,8 @@ this repo's version was kept.
 | Milestone | Contents | Where | Status |
 |---|---|---|---|
 | M0 | Design, simulator, self-calibration, VM/CSV access, label store | this repo | done (this PR + #1) |
-| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisites in the k3s repo: apply the VM manifest (5y retention, pinned image), set up a VM backup | firmware / k3s repos | next |
-| M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation notebook on simulated data | this repo | |
+| M1 | D1 firmware with `/metrics` and two-frame readings via PCF8574; VM scrape job; measure gain and integration time on the real tank. Prerequisite in the k3s repo: set up a VM backup (the 5-year retention idea was dropped) | firmware / k3s repos | next |
+| M2 | Hard-fault rules + per-time-of-day baseline + daily summaries; templated reasons; alert log; evaluation on simulated data | this repo | done on simulated data (see `docs/detection.md`); evaluation is a CLI command, not a notebook |
 | M3 | Isolation Forest on window features, compared against M2 on simulated and labelled events | this repo | |
 | M4 | Labelling CLI/notebook flow, weekly retraining, model registry and rollback, active-learning list | this repo | |
 | M5 | Container image + Helm chart: namespace, SQLite PVC, toolbox, CronJobs (see `docs/deploy.md`) | this repo | installed on k3s (lap1) 2026-11-25, Helm rev 1, image 0.2.0; calibrate and backup jobs running; score/train jobs switched off until M2-M4 |
@@ -318,9 +318,12 @@ opt-in, rate-limited and overridable by hand.
 From the local sessions (2026-11-21 to 11-23), kept here so they don't get lost.
 Nothing in this repo applies anything to the cluster.
 
-1. Apply the VM manifest (retention 90d to 5y, image pinned to v1.156.0). This
-   restarts the VM pod and pauses scraping for about a minute. Waiting for your
-   go-ahead.
+1. ~~Apply the VM manifest (retention 90d to 5y).~~ Dropped (leen, 2026-11-26):
+   VictoriaMetrics stays at 90 days for everything; no second long-term instance.
+   The unapplied manifest edit in the k3s repo can be reverted. Consequence: raw
+   readings older than 90 days are gone, so baselines and evaluations must work
+   within that window (they use 14-16 days), and anything worth keeping longer
+   (labels, alerts, anchors) already lives in SQLite.
 2. VM backup: Longhorn snapshot/backup, or `vmbackup` to the pi1 backup volume.
 3. DNS: `monitoring.fritz.box` did not resolve from the workstation on 11-21.
    Not investigated.
