@@ -68,7 +68,7 @@ class Board:
         self.dim_out = 0.0        # actual output
         self.dim_changes = 0
         self.sched = [p[:] for p in SCHED_DEFAULT]
-        self.sched_en = False
+        self.sched_en = True   # always on, as on the D1
         self.maxh = 7.0   # preview: max hours at 100 % (page enforces it)
         self.override_until = None
         self.source = "manual"
@@ -176,14 +176,15 @@ class Board:
         return a + (b - a) * f
 
     def relay_rules(self):
-        """CO2: on 2 h before the light first reaches its peak, off once it drops
-        below 60 % after the peak. Air: on while the light is below 40 %."""
-        L = [self.sched_level(m) for m in range(1440)]
-        mx = max(L)
-        pk = next(m for m, v in enumerate(L) if v >= mx - 1e-6)
-        on = (pk - 120) % 1440
-        off = next((k % 1440 for k in range(pk, pk + 1440) if L[k % 1440] < 60), None)
-        return on, off, L
+        """From the 100 % bar (first two consecutive points at 100 %): CO2 on 2 h
+        before the bar starts, off 2 h before it ends; air off from CO2-on until
+        the bar ends. Returns (co2_on, co2_off, air_on_at) or None without a bar."""
+        p = self.sched
+        for k in range(7):
+            if p[k][1] >= 100 and p[k + 1][1] >= 100:
+                st, en = p[k][0], p[k + 1][0]
+                return (st - 120) % 1440, (en - 120) % 1440, en
+        return None
 
     def tick_relays(self):
         now = time.monotonic()
@@ -201,17 +202,16 @@ class Board:
                 self.relay_src[k] = "safe"           # no time: CO2 off, air on
                 self.relays[k] = k == "air"
                 continue
-            on, off, L = self.relay_rules()
+            r = self.relay_rules()
             m = self.minute()
-            if k == "co2":
-                if off is None:
-                    want = True
-                elif on <= off:
-                    want = on <= m < off
-                else:
-                    want = m >= on or m < off
+            def win(a, b):
+                return a <= m < b if a <= b else (m >= a or m < b)
+            if r is None:
+                want = k == "air"
+            elif k == "co2":
+                want = win(r[0], r[1])
             else:
-                want = L[int(m) % 1440] < 40
+                want = not win(r[0], r[2])
             self.relays[k] = want
             self.relay_src[k] = "schedule"
         # Hard interlock: CO2 and air are never on together; air wins (safe for fish).
@@ -443,10 +443,7 @@ def make_handler(board):
                         return
                     board.sched = pts
                 if "en" in q:
-                    en = q["en"] == "1"
-                    if not en and board.sched_en:
-                        board.dim_pct = int(board.dim_out + 0.5)
-                    board.sched_en = en
+                    board.sched_en = True   # the schedule always runs (as on the D1)
                     board.override_until = None
                     board.relay_override.clear()
                 if "resume" in q:

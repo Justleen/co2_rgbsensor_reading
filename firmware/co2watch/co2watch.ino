@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.6.1"
+#define FW_VERSION "0.6.2"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -424,13 +424,8 @@ void handleSchedule() {
     memcpy(sched, p, sizeof sched);
   }
   if (server.hasArg("en")) {
-    bool en = server.arg("en") == "1";
-    if (!en && schedEnabled) {
-      dimPct = clampDim((int)(dimOut + 0.5f));  // keep the light where it is
-      EEPROM.write(0, EEPROM_MAGIC);
-      EEPROM.write(1, dimPct);
-    }
-    schedEnabled = en;
+    // The schedule always runs for now (leen, 2026-11-26): en=0 is ignored.
+    schedEnabled = true;
     overrideActive = false;
   }
   if (server.hasArg("resume")) overrideActive = false;

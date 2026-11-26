@@ -15,6 +15,7 @@ h1{font-size:20px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 10px}
 small,.mut{color:var(--mut)}input[type=range]{flex:1;min-width:160px}
 button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer;transition:transform .08s,filter .08s,background .2s}
 button:hover{filter:brightness(.95)}button:active{transform:scale(.94);filter:brightness(.8)}button:disabled{opacity:.6;cursor:wait}
+.b3{flex-wrap:nowrap;gap:6px;align-items:stretch}.b3 button{flex:1 1 0;min-width:0;padding:6px 4px;font-size:13px;line-height:1.2}
 .rl{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .rl label{display:flex;align-items:center;gap:8px;cursor:pointer}
 .sw{position:relative;width:46px;height:26px;flex:none}.sw input{opacity:0;width:0;height:0;position:absolute}
@@ -31,7 +32,7 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div id="sw"></div>
 <div class="row" style="margin-top:10px"><span class="big" id="hex">-</span><span class="big" id="hue">-</span></div>
 <small id="info">loading...</small>
-<div class="row" style="margin-top:10px"><button onclick="act('/read')">Take reading now</button>
+<div class="row b3" style="margin-top:10px"><button onclick="act('/read')">Take reading now</button>
 <button onclick="if(confirm('Use the current reading as white? Do this with the sensor on the white backing.'))act('/white?set=1')">Use as white reference</button>
 <button onclick="act('/white?reset=1')">Reset white</button></div>
 <div id="idxbox" style="display:none;margin-top:14px;border-top:1px solid var(--bd);padding-top:10px">
@@ -40,18 +41,14 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div id="idxm" style="position:absolute;top:-3px;width:4px;height:22px;margin-left:-2px;background:var(--fg);border-radius:2px;left:0"></div></div>
 <div class="row mut" style="justify-content:space-between;font-size:12px"><span>0 % = low (blue)</span><span>100 % = high</span></div>
 <small id="idxinfo" class="mut"></small>
-<div class="row" style="margin-top:8px"><label>low hue <input type="number" id="idxlo" step="0.1" style="width:5em"></label>
-<label>high hue <input type="number" id="idxhi" step="0.1" style="width:5em"></label><button onclick="idxSave()">Save ends</button></div>
-<div class="row" style="margin-top:6px"><button onclick="act('/api/co2index?low=now')">Set low = now</button>
+<div class="row b3" style="margin-top:6px"><button onclick="act('/api/co2index?low=now')">Set low = now</button>
 <button onclick="act('/api/co2index?high=now')">Set high = now</button><button onclick="act('/api/co2index?reset=1')">Default ends</button></div></div>
 </section>
-<section><h2>Light dimmer</h2>
-<div class="row"><input type="range" id="lv" min="0" max="100" oninput="editing=1;lvo.textContent=this.value+' %'" onchange="setDim()">
-<span class="big" id="lvo">-</span><button onclick="setDim()">Set</button></div>
-<small id="dinfo"></small>
-<div class="row" id="ovr" style="margin-top:8px;display:none"><button onclick="sch('resume=1')">Resume schedule now</button></div></section>
+<section><h2>Light</h2>
+<div class="row"><button onclick="act('/dimmer?level=100')">Set to max</button><button onclick="sch('resume=1')">Run schedule</button></div>
+<small id="dinfo"></small></section>
 <section><h2>Light schedule</h2>
-<div class="row"><label><input type="checkbox" id="en" onchange="sch('en='+(this.checked?1:0))"> Schedule on</label>
+<div class="row">
 <span class="mut" id="clk"></span></div>
 <canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
 <div id="dragHint" style="display:none"><div class="row" style="margin-top:6px"><label>Hours at 100 %
@@ -75,13 +72,15 @@ function lvAt(p,m){let i=7;for(let k=0;k<8;k++)if(p[k][0]<=m)i=k;const j=(i+1)%8
 function readTb(){const p=[];for(let k=0;k<8;k++){const v=$('t'+k).value.trim(),t=/^([01]?[0-9]|2[0-3]):([0-5][0-9])$/.exec(v);
  if(!t)throw 'Point '+(k+1)+': time "'+v+'" must be 24-hour HH:MM';
  p.push([(+t[1])*60+(+t[2]),Math.max(0,Math.min(100,+$('l'+k).value||0)),+$('r'+k).value])}return p}
-// Relay rules derived from the light schedule (preview; mirrored in the emulator):
-// CO2 on 2 h before the light first reaches its peak (100 %), off once it drops below 60 % after the peak.
-// Air on whenever the light is below 40 %. Air wins: CO2 is never on while air is on.
+// Relay rules derived from the 100 % bar of the light schedule (mirrored in the emulator):
+// CO2 on 2 h before the bar starts, off 2 h before the bar ends.
+// Air off from when CO2 comes on until the bar ends (light drops from 100 %), on otherwise.
+// Air wins: CO2 is never on while air is on. Without a 100 % bar: CO2 off, air on.
 const inWin=(m,a,b)=>a<=b?(m>=a&&m<b):(m>=a||m<b);
-function rules(p){const L=[];for(let m=0;m<1440;m++)L.push(lvAt(p,m));const mx=Math.max(...L),pk=L.findIndex(v=>v>=mx-1e-6);
- let off=-1;for(let k=pk;k<pk+1440;k++)if(L[k%1440]<60){off=k%1440;break}
- return{co2on:(pk-120+1440)%1440,co2off:off,co2:m=>off<0||inWin(m,(pk-120+1440)%1440,off),air:m=>L[Math.floor(m)%1440]<40}}
+function rules(p){let pl=-1;for(let k=0;k<7;k++)if(p[k][1]>=100&&p[k+1][1]>=100){pl=k;break}
+ if(pl<0)return{co2on:-1,co2off:-1,co2:m=>false,air:m=>true};
+ const st=p[pl][0],en=p[pl+1][0],on=(st-120+1440)%1440,off=(en-120+1440)%1440;
+ return{co2on:on,co2off:off,co2:m=>inWin(m,on,off),air:m=>!inWin(m,on,en)}}
 let hasRelays=0,dragOn=0;
 // --- Drag-to-edit (firmware >= 0.5.0 sends drag:true; the emulator sends preview) ---------------------------------
 // Time snaps to 5 min, level to 1 %. Points stay in time order. The 100 % plateau
@@ -144,7 +143,7 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=192,x=c.getContext('2d')
  if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(100));x.lineTo(X(nowMin),188);x.stroke()}}
 function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
  S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
- tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)try{fixSteps(readTb())}catch(e){}draw()};$('en').checked=S.en;if(S.maxh)$('maxh').value=S.maxh;if(dragOn)try{fixSteps(readTb())}catch(e){}schDirty=0;draw()}
+ tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)try{fixSteps(readTb())}catch(e){}draw()};if(S.maxh)$('maxh').value=S.maxh;if(dragOn)try{fixSteps(readTb())}catch(e){}schDirty=0;draw()}
 async function loadSch(){S=await (await fetch('/api/schedule')).json();fillTb()}
 async function sch(a){busy=1;const b=btnStart();let ok=false;try{const r=await fetch('/api/schedule?'+a,{method:'POST'});if(!r.ok)bad(await r.text());else{S=await r.json();fillTb();ok=true}}catch(e){bad('No answer from the board')}finally{busy=0;btnEnd(b);if(ok)done(b);load()}}
 function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){bad(e);return}
@@ -162,8 +161,7 @@ let idxEdit=0;
 function showIdx(x){const box=$('idxbox');if(!x){box.style.display='none';return}box.style.display='';
  $('idxv').textContent=x.ok?x.value.toFixed(1)+' %':'-';$('idxm').style.left=Math.max(0,Math.min(100,x.ok?x.value:0))+'%';
  $('idxinfo').textContent=x.ok?('hue '+x.hue.toFixed(1)+'° (avg of '+x.n+'), low '+x.low.toFixed(1)+'°, high '+x.high.toFixed(1)+'°'+(x.value<0||x.value>100?' — outside the range':'')):'waiting for a reading';
- if(!idxEdit&&document.activeElement!==$('idxlo')&&document.activeElement!==$('idxhi')){$('idxlo').value=x.low.toFixed(1);$('idxhi').value=x.high.toFixed(1)}}
-function idxSave(){act('/api/co2index?low='+encodeURIComponent($('idxlo').value)+'&high='+encodeURIComponent($('idxhi').value))}
+}
 function show(s){
  showIdx(s.co2idx);
  showRelays(s.relays,s.relay_src);
@@ -173,16 +171,13 @@ function show(s){
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';
  $('hue').textContent=s.colour.ok?'hue '+s.colour.hue.toFixed(1)+'°':'';
  $('info').textContent=s.seq?('reading #'+s.seq+', '+s.age+' s ago'+(s.saturated?', SATURATED':'')+', i2c errors '+s.i2c_errors):'no reading yet';
- const lv=$('lv');lv.min=s.dim.min;lv.max=s.dim.max;
- if(!editing){lv.value=Math.round(s.dim.level);$('lvo').textContent=s.dim.level+' %';}
- const src={manual:'manual',schedule:'following the schedule',override:'manual override, schedule resumes in '+Math.ceil(s.dim.override_left/60)+' min',safe:'no time yet: safe level'}[s.dim.source];
- $('dinfo').textContent='now '+s.dim.level+' % ('+src+'), limits '+s.dim.min+'-'+s.dim.max+' %';
- $('ovr').style.display=s.dim.source=='override'?'':'none';
+
+ const src={manual:'manual',schedule:'following the schedule',override:'max, schedule resumes in '+Math.ceil(s.dim.override_left/60)+' min',safe:'no time yet: safe level'}[s.dim.source];
+ $('dinfo').textContent=src;
  $('clk').textContent=s.time_valid?s.time+' (Amsterdam)':'waiting for NTP time';
  nowMin=s.time_valid?s.minute:null;if(S)draw();
 }
 async function load(){if(busy)return;try{show(await (await fetch('/api/state')).json())}catch(e){$('info').textContent='offline?'}}
 async function act(u){busy=1;const b=btnStart();let ok=false;try{const r=await fetch(u,{method:'POST'});if(!r.ok)bad(await r.text());else ok=true}catch(e){bad('No answer from the board')}finally{busy=0;btnEnd(b);if(ok)done(b);load()}}
-async function setDim(){await act('/dimmer?level='+$('lv').value);editing=0;load()}
 load();loadSch();setInterval(load,5000);
 </script></body></html>)HTML";
