@@ -15,8 +15,7 @@ drop checker and drives the light dimmer.
   `co2watch_co2_index_*`, `aquarium_light_dim_percent`,
   `aquarium_light_override_active` and `co2watch_build_info`.
 - Serves a web page on `/`: drop-checker colour (net = on - off, white
-  balanced, as hex and a colour bar), the CO2 index with a 12 h history (read by
-  the browser from VictoriaMetrics), the light buttons and the schedule editor.
+  balanced, as hex and a colour bar), the CO2 index, the light buttons and the schedule editor.
   White balance is display-only; `/metrics` keeps the raw counts.
 - Light: D6 (GPIO12), 1 kHz PWM (0.1 % = 10 mV steps) into a PWM-to-0-10V board,
   then the LCM-40 DIM input. "Set to max" (`/dimmer?level=100`) holds 100 % for
