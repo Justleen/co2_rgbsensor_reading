@@ -108,3 +108,19 @@ def test_score_once_logs_alerts_records_run_and_builds_status(tmp_path, sim):
     ok, msg, _ = score_once(path, lambda: (None, now, ["VM down"]))
     assert not ok and msg == "VM down"
     assert db.last_job_runs(con)[-1]["fails_since_ok"] == 1
+
+
+def test_index_map_fits_the_d1_index_and_falls_back_to_ends(sim):
+    from co2watch.features import prepare
+    from co2watch.web import _index_note, index_map
+    df = prepare(sim.readings)
+    m = index_map(df)                       # no D1 index in the simulation: firmware ends
+    assert m["method"] == "ends" and m["low_hue"] == 203.0
+    assert round(m["a"] + m["b"] * 203.0) == 0 and round(m["a"] + m["b"] * 69.0) == 100
+    # D1 index on its own (shifted) hue scale: the fit recovers that map, unclamped
+    df = df.assign(co2_index_pct=(190.0 - df["hue"]) / (190.0 - 60.0) * 100)
+    m = index_map(df)
+    assert m["method"] == "fit" and m["r2"] > 0.99 and abs(m["low_hue"] - 190) < 0.5
+    assert m["a"] + m["b"] * 220 < 0        # night above the 0 % end stays negative
+    note = _index_note(json.dumps({"hue_now": 125.0, "hue_normal": 190.0}), m)
+    assert note == "CO2 index: 50 % vs usual 0 %"

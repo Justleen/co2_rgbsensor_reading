@@ -37,6 +37,8 @@ CONTEXT_METRICS = {
     "ph": "aquarium_ph",
     "light_pct": "aquarium_light_dim_percent",  # firmware v0.4+ dimmer level
     "co2_index_pct": "co2watch_co2_index_percent",  # firmware v0.6 hue mapped low..high
+    "co2_index_low": "co2watch_co2_index_low_hue_degrees",  # D1 hue for 0 %
+    "co2_index_high": "co2watch_co2_index_high_hue_degrees",  # D1 hue for 100 %
 }
 # Sensor health series exposed by the firmware (v0.6), used by the fault rules.
 HEALTH_METRICS = {
@@ -139,3 +141,7 @@ class TankSchedule:
 
 
 BAND_NAMES = tuple(b.name for b in CHART_KH4)
+
+# The D1's CO2 index ends when it does not export them (firmware IDX_DEFAULT_*):
+# index % = (low - hue) / (low - high) * 100, not clamped.
+CO2_INDEX_DEFAULT_ENDS = (203.0, 69.0)

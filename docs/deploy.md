@@ -126,6 +126,10 @@ reasons, the last run of every job and the daily shape from the archive.
   detection once; the toolbox limit is 512 Mi for that.
 * `kubectl exec` into the toolbox works as before. There is no liveness
   probe, so the page can never restart the pod under an open session.
+* Every hue value is shown with the D1's CO2 index % beside it (same scale
+  as the D1, not clamped, so below 0 % and above 100 % happen). The map from
+  sensor hue to % is fitted to the D1's exported index over the last 7 days;
+  without that it uses the D1's index ends (default 203° = 0 %, 69° = 100 %).
 * Job status comes from the `job_runs` table: every `calibrate`, `score`,
   `archive` and `backup` run records its start, end, result and a one-line
   summary. A daily job without a success for 36 h shows as late.
