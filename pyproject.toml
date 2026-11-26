@@ -24,7 +24,7 @@ co2watch = "co2watch.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-co2watch = ["static/*.html"]
+co2watch = ["static/*.html", "static/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

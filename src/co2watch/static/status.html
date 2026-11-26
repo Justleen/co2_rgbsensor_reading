@@ -1,36 +1,48 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>co2watch status</title><style>
-:root{--bg:#f6f6f4;--fg:#1d1d1b;--mut:#6b6b66;--card:#fff;--bd:#ddd;--ok:#2e8b57;--warn:#e0a020;--bad:#c62828;--band:rgba(46,139,87,.16)}
-@media(prefers-color-scheme:dark){:root{--bg:#161615;--fg:#eee;--mut:#9a9a94;--card:#222220;--bd:#3a3a37;--band:rgba(80,190,120,.18)}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
-main{max-width:640px;margin:0 auto;padding:16px}
-section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
-h1{font-size:20px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 10px}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.big{font-size:26px;font-variant-numeric:tabular-nums}
-small,.mut{color:var(--mut)}
-.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:9px;color:#fff;background:var(--mut)}
-.pill.ok{background:var(--ok)}.pill.warn{background:var(--warn);color:#000}.pill.bad{background:var(--bad)}
-.sw{width:34px;height:34px;border-radius:8px;border:1px solid var(--bd);flex:none}
-.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px}
-.kv div{font-variant-numeric:tabular-nums}.kv small{display:block}
-.msg{margin-top:8px;padding:6px 10px;border-radius:6px;font-size:13px;background:#f6dcdc;color:#7a1f1f}
-.msg.info{background:#fff3d6;color:#5a4300}
+<title>co2watch status</title>
+<link rel="stylesheet" href="justleen_style.css">
+<style>
+/* Page layer on top of justleen_style.css (the shared design tokens and
+   card/badge classes). Short aliases keep the chart code readable. */
+:root{--fg:var(--color-text-primary);--mut:var(--color-text-secondary);--bd:var(--color-border);
+ --band:rgba(63,185,80,.16);--normal:rgba(63,185,80,.7);--bad:var(--color-status-critical);
+ --light:rgba(210,153,34,.8);--grid:rgba(139,148,158,.22)}
+body{font-size:var(--font-size-sm)}
+main{max-width:720px;margin:0 auto;padding:var(--space-md)}
+h1{font-size:var(--font-size-2xl);margin-bottom:var(--space-md);display:flex;align-items:baseline;gap:var(--space-sm)}
+h1 small{font-size:var(--font-size-sm);font-weight:400}
+.card{margin-bottom:var(--space-sm)}
+.card__header{margin-bottom:var(--space-sm);padding-bottom:var(--space-xs)}
+.row{display:flex;gap:var(--space-xs);align-items:center;flex-wrap:wrap}
+.big{font-size:var(--font-size-3xl);font-weight:600;font-family:var(--font-family-display);font-variant-numeric:tabular-nums;color:var(--color-text-primary)}
+small,.mut{color:var(--color-text-secondary);font-size:var(--font-size-xs)}
+.badge--muted{background:var(--color-bg-tertiary);color:var(--color-text-secondary);border:1px solid var(--color-border)}
+.sw{width:36px;height:36px;border-radius:var(--radius-md);border:1px solid var(--color-border);flex:none}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--space-sm);margin-top:var(--space-sm)}
+.kv div{font-variant-numeric:tabular-nums;font-family:var(--font-family-mono);font-size:var(--font-size-sm)}
+.kv small{display:block;font-family:var(--font-family-sans)}
+.msg{margin-top:var(--space-xs);padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-md);font-size:var(--font-size-sm);
+ background:rgba(218,54,51,.15);color:var(--color-status-error);border:1px solid rgba(218,54,51,.3)}
+.msg.info{background:rgba(210,153,34,.15);color:var(--color-status-warn);border-color:rgba(210,153,34,.3)}
 canvas{width:100%;height:230px;display:block}
-table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
-td,th{text-align:right;padding:3px 6px;vertical-align:top}th{font-weight:600;color:var(--mut)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:var(--font-size-sm)}
+td,th{text-align:right;padding:var(--space-2xs) var(--space-xs);vertical-align:top;border-bottom:1px solid var(--color-border-subtle)}
+th{font-weight:600;color:var(--color-text-secondary);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.5px}
 th:first-child,td:first-child{text-align:left}td.l{text-align:left}
-#daily td,#daily th{white-space:nowrap}@media(max-width:480px){table{font-size:12.5px}td,th{padding:3px 3px}}
-.al{border-top:1px solid var(--bd);padding:8px 0}.al:first-child{border-top:0;padding-top:0}
-.al p{margin:4px 0 0}
-.leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:6px}
+tr.sub td{border-bottom:1px solid var(--color-border-subtle);padding-top:0}tr.main td{border-bottom:0}
+#daily td,#daily th{white-space:nowrap}
+.scroll{overflow-x:auto}
+@media(max-width:480px){table{font-size:var(--font-size-xs)}td,th{padding:3px 3px}th{letter-spacing:0;text-transform:none}.big{font-size:var(--font-size-2xl)}}
+.al{border-top:1px solid var(--color-border-subtle);padding:var(--space-sm) 0}.al:first-child{border-top:0;padding-top:0}
+.al b{color:var(--color-text-primary)}.al p{margin:var(--space-2xs) 0 0;color:var(--color-text-primary)}
+.leg{display:flex;gap:var(--space-sm);flex-wrap:wrap;font-size:var(--font-size-xs);color:var(--color-text-secondary);margin:var(--space-xs) 0}
 .leg i{display:inline-block;width:14px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 </style></head><body><main>
 <h1>co2watch <small id="upd">loading…</small></h1>
 <div id="errs"></div>
 
-<section><h2>Now</h2>
+<section class="card"><div class="card__header"><h2 class="card__title">Now</h2></div>
 <div class="row"><span class="sw" id="sw"></span><span class="big" id="co2">-</span><span id="state"></span></div>
 <small id="co2sub"></small>
 <div class="kv">
@@ -44,23 +56,23 @@ th:first-child,td:first-child{text-align:left}td.l{text-align:left}
 <div id="learn"></div>
 </section>
 
-<section><h2>Last 48 hours</h2>
+<section class="card"><div class="card__header"><h2 class="card__title">Last 48 hours</h2></div>
 <canvas id="cv" height="230"></canvas>
 <div class="leg"><span><i style="background:var(--fg)"></i>drop checker (up = more CO2)</span>
 <span><i style="background:var(--band)"></i>learned normal</span>
-<span><i style="background:rgba(224,160,32,.75)"></i>light</span>
+<span><i style="background:var(--light)"></i>light</span>
 <span><i style="border-top:2px dashed #3cb043;height:0"></i>leaflet bands</span>
 <span><i style="background:var(--bad)"></i>anomaly score</span></div>
 <small id="idxnote"></small>
 </section>
 
-<section><h2>Alerts</h2><div id="alerts"><small>loading…</small></div></section>
+<section class="card"><div class="card__header"><h2 class="card__title">Alerts</h2></div><div id="alerts"><small>loading…</small></div></section>
 
-<section><h2>Jobs</h2>
+<section class="card"><div class="card__header"><h2 class="card__title">Jobs</h2></div>
 <table id="jobs"><tr><th>job</th><th>last run</th><th>result</th></tr></table></section>
 
-<section><h2>Daily shape</h2>
-<table id="daily"><tr><th>day</th><th>night</th><th>peak</th><th>swing</th><th>90 % at</th><th>near peak</th><th>alerts</th></tr></table>
+<section class="card"><div class="card__header"><h2 class="card__title">Daily shape</h2></div>
+<div class="scroll"><table id="daily"><tr><th>day</th><th>night</th><th>peak</th><th>swing</th><th>90 % at</th><th>near peak</th><th>alerts</th></tr></table></div>
 <small>Sensor hue and CO2 index %; lower hue / higher % is more CO2. Filled in nightly by the archive job.</small></section>
 </main><script>
 const $=id=>document.getElementById(id);let D=null;
@@ -76,7 +88,7 @@ const fmt=ms=>ms==null?'-':new Date(ms).toLocaleString([], {weekday:'short',day:
 const hhmm=ms=>new Date(ms).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false});
 function ago(ms){if(ms==null)return 'never';const m=Math.round((D.now_ms-ms)/60000);
  if(m<1)return 'just now';if(m<90)return m+' min ago';const h=m/60;if(h<36)return Math.round(h)+' h ago';return Math.round(h/24)+' days ago'}
-function scorePill(s){if(s==null)return '';return s>=1?'<span class="pill bad">alert</span>':s>=.6?'<span class="pill warn">watch</span>':'<span class="pill ok">normal</span>'}
+function scorePill(s){if(s==null)return '';return s>=1?'<span class="badge badge--critical">alert</span>':s>=.6?'<span class="badge badge--warn">watch</span>':'<span class="badge badge--good">normal</span>'}
 function render(){
  const L=D.latest,errs=[...D.errors];
  if(L&&L.age_min>15)errs.unshift('No new readings for '+Math.round(L.age_min)+' min. Is the D1 online and VictoriaMetrics scraping it?');
@@ -102,13 +114,13 @@ function render(){
   ': '+m.low_hue+'° = 0 %, '+m.high_hue+'° = 100 %) and can go below 0 % or above 100 %.':'';
  draw();
  $('alerts').innerHTML=D.alerts.length?D.alerts.map(a=>'<div class="al"><div class="row"><b>'+esc(KIND[a.kind]||a.kind)+'</b>'+
-  (a.open?'<span class="pill bad">open</span>':'')+'<small>'+fmt(a.start_ms)+(a.end_ms?' – '+hhmm(a.end_ms):'')+' · score '+(a.score??0).toFixed(2)+'</small></div>'+
+  (a.open?'<span class="badge badge--critical"><span class="status-dot status-dot--critical"></span>open</span>':'')+'<small>'+fmt(a.start_ms)+(a.end_ms?' – '+hhmm(a.end_ms):'')+' · score '+(a.score??0).toFixed(2)+'</small></div>'+
   '<p>'+esc(a.reason)+(a.index_note?' <small>('+esc(a.index_note)+')</small>':'')+'</p></div>').join(''):'<small>No alerts logged.</small>';
  const jt=$('jobs');while(jt.rows.length>1)jt.deleteRow(1);
- for(const j of D.jobs){const r=jt.insertRow(),st={ok:'ok',late:'warn',failed:'bad',running:'warn',never:''}[j.state];
+ for(const j of D.jobs){const r=jt.insertRow(),st={ok:'good',late:'warn',failed:'error',running:'info',never:'muted'}[j.state];
   const lab={ok:'ok',late:'late',failed:j.fails_since_ok>1?'failed ×'+j.fails_since_ok:'failed',running:'running',never:'never run'}[j.state];
-  r.innerHTML='<td>'+esc(j.job)+'</td><td>'+(j.started_ms?ago(j.started_ms):'-')+'</td><td><span class="pill '+st+'">'+lab+'</span></td>';
-  if(j.summary||(j.state=='late'||j.state=='failed')&&j.last_ok_ms){const r2=jt.insertRow();
+  r.className=(j.summary||(j.state=='late'||j.state=='failed')&&j.last_ok_ms)?'main':'';r.innerHTML='<td>'+esc(j.job)+'</td><td>'+(j.started_ms?ago(j.started_ms):'-')+'</td><td><span class="badge badge--'+st+'">'+lab+'</span></td>';
+  if(j.summary||(j.state=='late'||j.state=='failed')&&j.last_ok_ms){const r2=jt.insertRow();r2.className='sub';
    r2.innerHTML='<td></td><td class="l" colspan="2"><small>'+esc(j.summary||'')+((j.state=='late'||j.state=='failed')?' (last success '+ago(j.last_ok_ms)+')':'')+'</small></td>'}}
  const dt=$('daily');while(dt.rows.length>1)dt.deleteRow(1);
  if(!D.daily.length){dt.insertRow().innerHTML='<td colspan="7" class="l"><small>No days archived yet.</small></td>'}
@@ -129,10 +141,10 @@ function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext(
  const pad=Math.max(4,(hi-lo)*.08);lo-=pad;hi+=pad;
  const Y=v=>top+(v-lo)/(hi-lo)*ph;   // inverted: low hue (more CO2) at the top
  // light: a lane between the plot and the score strip, height = dimmer level
- const lTop=top+ph+3,lh=8;x.fillStyle='rgba(224,160,32,.75)';
+ const lTop=top+ph+3,lh=8;x.fillStyle=cs.getPropertyValue('--light');
  S.t.forEach((t,i)=>{const v=S.light_pct[i];if(!v)return;const xa=X(t),xb=i+1<S.t.length?X(S.t[i+1]):R;x.fillRect(xa,lTop+lh*(1-v/100),Math.max(xb-xa,1),lh*v/100)});
  // grid: local midnight and every 6 h
- x.strokeStyle='rgba(128,128,128,.25)';x.lineWidth=1;
+ x.strokeStyle=cs.getPropertyValue('--grid');x.lineWidth=1;
  const d0=new Date(t0);d0.setMinutes(0,0,0);for(let t=d0.getTime();t<=t1;t+=3600e3){const h=new Date(t).getHours();if(h%6)continue;
   x.beginPath();x.moveTo(X(t),top);x.lineTo(X(t),sTop+sh);x.setLineDash(h?[2,3]:[]);x.stroke();x.setLineDash([]);
   if(X(t)>L+8&&X(t)<R-10){x.fillStyle=mut;x.fillText(h?String(h).padStart(2,'0'):new Date(t).toLocaleDateString([], {weekday:'short'}),X(t)-8,sTop+sh+12)}}
@@ -144,20 +156,20 @@ function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext(
  x.fillStyle=band;let seg=[];const flush=()=>{if(seg.length>1){x.beginPath();seg.forEach(([t,a],k)=>k?x.lineTo(X(t),Y(a)):x.moveTo(X(t),Y(a)));
   for(let k=seg.length-1;k>=0;k--)x.lineTo(X(seg[k][0]),Y(seg[k][2]));x.closePath();x.fill()}seg=[]};
  S.t.forEach((t,i)=>{const a=S.lo[i],b=S.hi[i];if(a==null||b==null){flush();return}seg.push([t,Math.max(lo,a),Math.min(hi,b)])});flush();
- x.strokeStyle='rgba(46,139,87,.6)';x.setLineDash([3,3]);line(S.normal);x.setLineDash([]);
+ x.strokeStyle=cs.getPropertyValue('--normal');x.setLineDash([3,3]);line(S.normal);x.setLineDash([]);
  // the reading
  x.strokeStyle=fg;x.lineWidth=1.6;line(S.hue);x.lineWidth=1;
  function line(arr){x.beginPath();let pen=0;S.t.forEach((t,i)=>{const v=arr[i];if(v==null){pen=0;return}pen?x.lineTo(X(t),Y(v)):x.moveTo(X(t),Y(v));pen=1});x.stroke()}
  // y labels (hue)
  // left: hue; right: CO2 index % with dotted lines at the D1's 0 % and 100 %
  const refY=[];x.fillStyle=mut;
- if(D.index){x.strokeStyle='rgba(128,128,128,.35)';x.setLineDash([1,3]);for(const q of [0,100]){const h=(q-D.index.a)/D.index.b;if(h<lo||h>hi)continue;
+ if(D.index){x.strokeStyle=cs.getPropertyValue('--grid');x.setLineDash([1,3]);for(const q of [0,100]){const h=(q-D.index.a)/D.index.b;if(h<lo||h>hi)continue;
   x.beginPath();x.moveTo(L,Y(h));x.lineTo(R,Y(h));x.stroke();x.fillText(q+' %',R+4,Y(h)+3);refY.push(Y(h))}x.setLineDash([])}
  for(const v of [lo+pad,(lo+hi)/2,hi-pad]){x.fillText(Math.round(v)+'°',0,Y(v)+3);if(P(v)!=null&&refY.every(y=>Math.abs(y-Y(v))>12))x.fillText(P(v)+' %',R+4,Y(v)+3)}
  x.fillText('more CO2 ↑',L+4,top+10);
  // score strip
  const sm=Math.max(1.5,...S.score.filter(v=>v!=null)),SY=v=>sTop+sh-Math.min(v,sm)/sm*sh;
- x.fillStyle='rgba(128,128,128,.08)';x.fillRect(L,sTop,R-L,sh);
+ x.fillStyle='rgba(139,148,158,.08)';x.fillRect(L,sTop,R-L,sh);
  x.strokeStyle=bad;x.globalAlpha=.5;x.setLineDash([3,3]);x.beginPath();x.moveTo(L,SY(S.threshold));x.lineTo(R,SY(S.threshold));x.stroke();x.setLineDash([]);x.globalAlpha=1;
  x.fillStyle=bad;x.beginPath();x.moveTo(X(S.t[0]),sTop+sh);S.t.forEach((t,i)=>x.lineTo(X(t),SY(S.score[i]||0)));x.lineTo(X(S.t[S.t.length-1]),sTop+sh);x.closePath();
  x.globalAlpha=.55;x.fill();x.globalAlpha=1;x.fillStyle=mut;x.fillText('score',0,sTop+sh/2+3);x.fillText('1.0',R-16,SY(S.threshold)-2)}

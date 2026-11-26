@@ -89,6 +89,8 @@ def test_http_server_smoke(tmp_path, sim):
             time.sleep(0.1)
     page = urllib.request.urlopen(base + "/").read().decode()
     assert "api/status" in page
+    css = urllib.request.urlopen(base + "/justleen_style.css").read().decode()
+    assert "--color-bg-primary" in css and "justleen_style.css" in page
     st = json.loads(urllib.request.urlopen(base + "/api/status", timeout=60).read())
     assert st["latest"]["age_min"] == 5 and st["series"]["t"]
 
