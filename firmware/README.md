@@ -30,6 +30,14 @@ drop checker and drives the light dimmer.
   A manual change pauses the schedule for 1 hour; without a valid time the
   light goes to 30 %. Stored in flash; API at `/api/schedule`.
 
+- CO2 index (v0.6.0): zooms into the drop checker's colour band. The hue
+  (average of the last 3 readings) is mapped so a "low" hue = 0 % and a "high"
+  hue = 100 % (`co2watch_co2_index_percent`, not clamped). Defaults are the
+  leaflet's 3 and 50 mg/l colours (203 deg / 64 deg), not calibrated to this
+  sensor: set the ends on the page ("Set low = now" when the checker is fully
+  blue). Ends stored in flash; API `/api/co2index?low=&high=` (deg or `now`).
+  Raw counts are unchanged.
+
 Wiring: SDA D2, SCL D1, TCS34725 at 0x29, PCF8574 at 0x20 (on the bench board).
 
 ## Secrets

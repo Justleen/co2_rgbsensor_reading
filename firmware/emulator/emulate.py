@@ -11,6 +11,7 @@ reload) plus mock versions of the firmware's HTTP API, with state in memory:
   /white            POST set=1 | reset=1
   /read             POST: take a reading now
   /metrics          Prometheus text, same names as the firmware
+  /api/co2index     POST low=|high= (deg or "now"), reset=1
   /relay            POST name=co2|air|heat|pump&on=0|1 (PREVIEW: emulator only)
 
 Readings are simulated: the drop-checker hue drifts blue at night to green/lime
@@ -72,6 +73,8 @@ class Board:
         self.override_until = None
         self.source = "manual"
         self.posts = 0
+        self.idx_low, self.idx_high = 203.0, 64.0   # CO2 index ends (firmware defaults)
+        self.hue_hist = []
         # Relay preview (mockup only; the firmware has no relay code yet).
         self.relays = {"co2": True, "air": False, "heat": False, "pump": True}
         self.relay_override = {}   # name -> monotonic time the manual hold ends
@@ -120,6 +123,10 @@ class Board:
         self.on = [min(MAX_COUNT, o + n) for o, n in zip(self.off, net + [net_c])]
         self.seq += 1
         self.read_at = time.monotonic()
+        if hasattr(self, "hue_hist"):
+            c = self.colour()
+            if c["ok"]:
+                self.hue_hist = (self.hue_hist + [c["hue"]])[-3:]
 
     def colour(self):
         c = {"ok": False, "net": [0, 0, 0], "rgb": [0, 0, 0], "hex": "#000000", "hue": 0.0}
@@ -251,8 +258,18 @@ class Board:
             "time_valid": valid, "time": t.strftime("%H:%M:%S") if valid else "",
             "minute": round(self.minute(), 2) if valid else 0,
             "relays": dict(self.relays), "relay_src": dict(self.relay_src),
+            "co2idx": self.co2idx(),
             "preview": True,  # enables preview-only page features (relays, drag-to-edit)
         }
+
+    def co2idx(self):
+        if not self.hue_hist:
+            return {"ok": False, "value": 0, "hue": 0, "n": 0, "low": self.idx_low,
+                    "high": self.idx_high}
+        h = sum(self.hue_hist) / len(self.hue_hist)
+        v = (self.idx_low - h) / (self.idx_low - self.idx_high) * 100
+        return {"ok": True, "value": round(v, 1), "hue": round(h, 1),
+                "n": len(self.hue_hist), "low": self.idx_low, "high": self.idx_high}
 
     def schedule(self):
         return {"en": self.sched_en, "pts": self.sched, "maxh": self.maxh}
@@ -369,6 +386,36 @@ def make_handler(board):
                                   "text/plain")
                         return
                     board.wb = [max(net) / n for n in net]
+                self.j(board.state())
+            elif u.path == "/api/co2index":
+                lo, hi = board.idx_low, board.idx_high
+                cur = board.co2idx()
+                for name in ("low", "high"):
+                    if name in q:
+                        v = q[name]
+                        if v == "now":
+                            if not cur["ok"]:
+                                self.send(409, "no valid reading yet\n", "text/plain")
+                                return
+                            x = cur["hue"]
+                        else:
+                            try:
+                                x = float(v)
+                            except ValueError:
+                                x = -1
+                            if not 0 <= x <= 360:
+                                self.send(400, "hue must be 0-360\n", "text/plain")
+                                return
+                        if name == "low":
+                            lo = x
+                        else:
+                            hi = x
+                if "reset" in q:
+                    lo, hi = 203.0, 64.0
+                if abs(lo - hi) < 1:
+                    self.send(400, "low and high hue must differ\n", "text/plain")
+                    return
+                board.idx_low, board.idx_high = lo, hi
                 self.j(board.state())
             elif u.path == "/relay":
                 name = q.get("name", "")

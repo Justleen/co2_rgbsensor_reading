@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.5.1"
+#define FW_VERSION "0.6.0"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -72,6 +72,16 @@ static const uint8_t EEPROM_MAGIC = 0xD1;
 static const uint8_t EEPROM_WB_MAGIC = 0xB4;  // byte 2; gains at bytes 4..15
 static const uint8_t EEPROM_SCHED_MAGIC = 0x5C;  // byte 16; enable 17; points 18..49
 static const int EEPROM_MAXH = 50;  // hours at 100 %, in half hours (1..32)
+static const int EEPROM_IDX = 52;   // magic 0xC1; float low hue @54, high hue @58
+
+// ---- CO2 index ----------------------------------------------------------------
+// Zooms into the drop checker's colour band: the (white-balanced, smoothed) hue
+// is mapped linearly so that IDX_LOW_HUE = 0 % (blue, low CO2) and IDX_HIGH_HUE =
+// 100 % (lime/yellow, high CO2). Defaults are the leaflet's 3 and 50 mg/l bands
+// (KH4) - NOT calibrated to this sensor; set both ends from real readings on the
+// page. Not clamped, so values below 0 or above 100 mean "outside the range".
+static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 64;
+static const uint8_t IDX_SMOOTH = 3;  // readings averaged (3 x 5 min)
 
 // ---- schedule ---------------------------------------------------------------
 static const char *TZ_AMSTERDAM = "CET-1CEST,M3.5.0,M10.5.0/3";
@@ -122,6 +132,9 @@ uint8_t dimPct = 0;     // last manual level
 float dimOut = 0;       // what D6 actually outputs, in %
 SchedPoint sched[8];
 bool schedEnabled = false;
+float idxLow = IDX_DEFAULT_LOW, idxHigh = IDX_DEFAULT_HIGH;
+float hueHist[IDX_SMOOTH];
+uint8_t hueN = 0, hueHead = 0;
 float schedMaxH = 7;   // hours at 100 % (the page enforces it while editing)
 bool overrideActive = false;
 uint32_t overrideStart = 0;
@@ -240,6 +253,12 @@ void takeReading() {
   r.millisAt = millis();
   last = r;
   haveReading = true;
+  Colour col = colourOf(r);
+  if (col.ok) {
+    hueHist[hueHead] = col.hue;
+    hueHead = (hueHead + 1) % IDX_SMOOTH;
+    if (hueN < IDX_SMOOTH) hueN++;
+  }
 
   Serial.printf(
       "#%lu off c=%u r=%u g=%u b=%u%s | on c=%u r=%u g=%u b=%u%s | net c=%d r=%d g=%d b=%d%s errs=%lu\n",
@@ -441,6 +460,7 @@ void dimmerBegin() {
   else applyDim(pct, false);
   dimPct = clampDim(pct);
   wbLoad();
+  idxLoad();
 }
 
 void handleDimmer() {
@@ -513,6 +533,81 @@ Colour colourOf(const Reading &r) {
 
 void handleRoot() { server.send_P(200, "text/html", PAGE); }
 
+// ---- CO2 index ------------------------------------------------------------------
+bool smoothHue(float &h) {
+  if (!hueN) return false;
+  float sum = 0;
+  for (uint8_t i = 0; i < hueN; i++) sum += hueHist[i];
+  h = sum / hueN;
+  return true;
+}
+
+bool co2Index(float &idx) {
+  float h;
+  if (!smoothHue(h) || fabsf(idxLow - idxHigh) < 1) return false;
+  idx = (idxLow - h) / (idxLow - idxHigh) * 100.0f;
+  return true;
+}
+
+void idxLoad() {
+  if (EEPROM.read(EEPROM_IDX) != 0xC1) return;
+  float lo, hi;
+  EEPROM.get(EEPROM_IDX + 2, lo);
+  EEPROM.get(EEPROM_IDX + 6, hi);
+  if (lo >= 0 && lo <= 360 && hi >= 0 && hi <= 360 && fabsf(lo - hi) >= 1) {
+    idxLow = lo;
+    idxHigh = hi;
+  }
+}
+
+void idxSave() {
+  EEPROM.write(EEPROM_IDX, 0xC1);
+  EEPROM.put(EEPROM_IDX + 2, idxLow);
+  EEPROM.put(EEPROM_IDX + 6, idxHigh);
+  EEPROM.commit();
+}
+
+// POST /api/co2index: low=deg, high=deg, low=now / high=now (use the smoothed
+// hue), reset=1 (defaults). Always answers with the current index state.
+void handleIndex() {
+  float lo = idxLow, hi = idxHigh, h;
+  bool haveH = smoothHue(h);
+  for (int k = 0; k < 2; k++) {
+    const char *name = k ? "high" : "low";
+    if (!server.hasArg(name)) continue;
+    String v = server.arg(name);
+    float x;
+    if (v == "now") {
+      if (!haveH) {
+        server.send(409, "text/plain", "no valid reading yet\n");
+        return;
+      }
+      x = h;
+    } else {
+      x = v.toFloat();
+      if (!(x >= 0 && x <= 360)) {
+        server.send(400, "text/plain", "hue must be 0-360\n");
+        return;
+      }
+    }
+    (k ? hi : lo) = x;
+  }
+  if (server.hasArg("reset")) {
+    lo = IDX_DEFAULT_LOW;
+    hi = IDX_DEFAULT_HIGH;
+  }
+  if (fabsf(lo - hi) < 1) {
+    server.send(400, "text/plain", "low and high hue must differ\n");
+    return;
+  }
+  if (lo != idxLow || hi != idxHigh) {
+    idxLow = lo;
+    idxHigh = hi;
+    idxSave();
+  }
+  handleState();
+}
+
 void handleState() {
   Colour c = colourOf(last);
   char tbuf[12] = "";
@@ -526,21 +621,26 @@ void handleState() {
   }
   unsigned long ovLeft =
       overrideActive ? (OVERRIDE_MS - (millis() - overrideStart)) / 1000UL : 0;
-  char b[800];
+  float idxV = 0, idxH = 0;
+  bool idxOk = co2Index(idxV);
+  smoothHue(idxH);
+  char b[900];
   snprintf(b, sizeof b,
            "{\"version\":\"" FW_VERSION "\",\"drag\":true,\"seq\":%lu,\"age\":%lu,\"saturated\":%s,\"i2c_errors\":%lu,"
            "\"off\":[%u,%u,%u,%u],\"on\":[%u,%u,%u,%u],"
            "\"colour\":{\"ok\":%s,\"net\":[%d,%d,%d],\"rgb\":[%u,%u,%u],\"hex\":\"%s\",\"hue\":%.1f},"
            "\"wb\":[%.4f,%.4f,%.4f],\"dim\":{\"level\":%.1f,\"min\":%u,\"max\":%u,"
            "\"source\":\"%s\",\"override_left\":%lu},"
-           "\"time_valid\":%s,\"time\":\"%s\",\"minute\":%.2f}",
+           "\"time_valid\":%s,\"time\":\"%s\",\"minute\":%.2f,"
+           "\"co2idx\":{\"ok\":%s,\"value\":%.1f,\"hue\":%.1f,\"n\":%u,\"low\":%.1f,\"high\":%.1f}}",
            (unsigned long)last.seq,
            haveReading ? (unsigned long)((millis() - last.millisAt) / 1000) : 0UL,
            last.saturated ? "true" : "false", (unsigned long)i2cErrors, last.off.r,
            last.off.g, last.off.b, last.off.c, last.on.r, last.on.g, last.on.b, last.on.c,
            c.ok ? "true" : "false", c.net[0], c.net[1], c.net[2], c.rgb[0], c.rgb[1],
            c.rgb[2], c.hex, c.hue, wbGain[0], wbGain[1], wbGain[2], dimOut, DIM_MIN_PCT,
-           DIM_MAX_PCT, dimSource, ovLeft, timeValid() ? "true" : "false", tbuf, mod);
+           DIM_MAX_PCT, dimSource, ovLeft, timeValid() ? "true" : "false", tbuf, mod,
+           idxOk ? "true" : "false", idxV, idxH, hueN, idxLow, idxHigh);
   server.send(200, "application/json", b);
 }
 
@@ -558,6 +658,9 @@ void handleWhite() {
     for (int i = 0; i < 3; i++) wbGain[i] = (float)mx / c.net[i];
     wbSave();
   }
+  hueN = 0;  // hues before the change are not comparable
+  Colour c2 = colourOf(last);
+  if (c2.ok) { hueHist[0] = c2.hue; hueHead = 1; hueN = 1; }
   handleState();
 }
 
@@ -598,6 +701,15 @@ void handleMetrics() {
       s += F("tcs34725_hue_degrees");  // white-balanced, display grade
       s += num;
     }
+    float idx;
+    if (co2Index(idx)) {
+      char num[24];
+      snprintf(num, sizeof num, " %.1f\n", idx);
+      s += F("co2watch_co2_index_percent");  // smoothed hue mapped low..high
+      s += num;
+    }
+    line("co2watch_co2_index_low_hue_degrees", "", idxLow);
+    line("co2watch_co2_index_high_hue_degrees", "", idxHigh);
   }
   line("tcs34725_reading_seq", "", last.seq);
   line("tcs34725_id_ok", "", last.idOk);
@@ -655,6 +767,7 @@ void setup() {
     server.on("/", handleRoot);
     server.on("/api/state", handleState);
     server.on("/white", handleWhite);
+    server.on("/api/co2index", handleIndex);
     server.on("/read", []() { takeReading(); handleState(); });
     server.begin();
 #ifdef OTA_PASS
