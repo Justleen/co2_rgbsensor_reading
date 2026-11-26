@@ -32,6 +32,7 @@ The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-che
 | `src/co2watch/db.py` | SQLite: labels, calibration events, alert log, model registry |
 | `src/co2watch/features.py` | LED off/on frame subtraction, hue, ratios, UTC grid, rolling features, local time |
 | `src/co2watch/simulator.py` | synthetic tank + drop checker + two-frame sensor, with injectable anomalies |
+| `src/co2watch/archive.py` | long-term store in SQLite: hourly/daily aggregates, raw windows around alerts and labels |
 | `src/co2watch/detect.py`, `evaluate.py` | M2 detection and its evaluation on simulated anomalies |
 | `src/co2watch/calibration.py` | self-calibration against the leaflet chart, drift report |
 | `src/co2watch/config.py` | leaflet chart (KH4), metric names, priors |

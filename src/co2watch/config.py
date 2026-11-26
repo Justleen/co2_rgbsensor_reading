@@ -36,6 +36,7 @@ CONTEXT_METRICS = {
     "temperature": "aquarium_temperature_celsius",
     "ph": "aquarium_ph",
     "light_pct": "aquarium_light_dim_percent",  # firmware v0.4+ dimmer level
+    "co2_index_pct": "co2watch_co2_index_percent",  # firmware v0.6 hue mapped low..high
 }
 # Sensor health series exposed by the firmware (v0.6), used by the fault rules.
 HEALTH_METRICS = {

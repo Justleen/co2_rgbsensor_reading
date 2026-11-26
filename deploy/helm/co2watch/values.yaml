@@ -90,6 +90,14 @@ jobs:
     enabled: true
     schedule: "30 10 * * *"
     args: ["calibrate", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)", "--db", "$(DB)", "--days", "21", "--save"]
+  # Nightly long-term store (VictoriaMetrics keeps raw data for a limited time):
+  # hourly/daily aggregates of the last 3 complete days, plus full-resolution
+  # raw windows (+/- 6 h) around alerts and labels. Idempotent. Needs image 0.3.0+.
+  archive:
+    enabled: true
+    schedule: "30 2 * * *"
+    args: ["archive", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)", "--db", "$(DB)",
+           "--agg-days", "3"]
   # Nightly consistent copy of the SQLite file on the same volume (keep 14).
   # This is NOT off-node protection; see docs/deploy.md.
   backup:
