@@ -11,6 +11,9 @@ Commands
   calibrate         daily anchors, self-calibration fit and drift report
   label             store a label for a time window (normal, real_problem, ...)
   mark-calibration  record a fluid change / sensor move
+  score             M2 detection (rules, baseline, daily summaries); logs alerts
+  alerts            list logged alerts
+  evaluate          recall / false alarms on simulated anomalies
   init-db           create the SQLite schema
   backup            consistent copy of the SQLite file, keeping the newest N
 """
@@ -97,6 +100,55 @@ def _cmd_calibrate(a):
         print(f"typical night low : {fit.describe(valid['night_hue'].tail(7).median())}")
 
 
+def _cmd_score(a):
+    from .detect import DetectConfig, detect
+    con = db.connect(a.db)
+    raw = _load(a)
+    if a.now:  # replay: pretend later data does not exist yet
+        raw = raw[raw.index < _local(a.now)]
+    df = prepare(raw, a.saturation)
+    if df.empty:
+        print("no readings in the selected window")
+        return
+    events = db.calibration_events(con)
+    det = detect(df, DetectConfig(threshold=a.threshold), events)
+    now = _local(a.now) if a.now else df.index[-1] + pd.Timedelta(minutes=5)
+    since = now - pd.Timedelta(hours=a.since_hours)
+    new = 0
+    for _, al in det.alerts.iterrows():
+        if al["end"] < since or al["known_at"] > now:
+            continue
+        i, created = db.upsert_alert(con, al["start"], al["end"], al["score"], al["kind"],
+                                     al["reason"], model_version="m2-rules-baseline",
+                                     details=al["details"])
+        new += created
+        print(f"{'NEW ' if created else 'open'} #{i} [{al['kind']}] score {al['score']:.2f}: "
+              f"{al['reason']}")
+    last = det.scores.iloc[-1]
+    print(f"scored {len(df)} slots up to {df.index[-1].tz_convert(TZ):%Y-%m-%d %H:%M}; "
+          f"latest score {last['score']:.2f}; {new} new alert(s)")
+
+
+def _cmd_alerts(a):
+    con = db.connect(a.db)
+    al = db.read_alerts(con).tail(a.last)
+    if al.empty:
+        print("no alerts logged")
+    for _, r in al.iterrows():
+        print(f"#{r['id']} {r['start'].tz_convert(TZ):%Y-%m-%d %H:%M} [{r['kind']}] "
+              f"score {r['score']:.2f}\n    {r['reason']}")
+
+
+def _cmd_evaluate(a):
+    from .evaluate import evaluate, to_markdown
+    r = evaluate(seeds=tuple(range(1, a.seeds + 1)), days=a.days)
+    md = to_markdown(r)
+    print(md)
+    if a.out:
+        Path(a.out).write_text(md + "\n")
+        print(f"written to {a.out}")
+
+
 def _cmd_label(a):
     con = db.connect(a.db)
     i = db.add_label(con, _local(a.start), _local(a.end), a.label, band=a.band, note=a.note)
@@ -160,6 +212,24 @@ def main(argv=None):
     s.add_argument("--show", type=int, default=7)
     s.add_argument("--save", action="store_true", help="store daily anchors in --db")
     s.set_defaults(func=_cmd_calibrate)
+
+    s = sub.add_parser("score", help="run M2 detection and log alerts")
+    _source_args(s, need_db=True)
+    s.set_defaults(days=16)
+    s.add_argument("--threshold", type=float, default=1.0)
+    s.add_argument("--since-hours", type=float, default=2.0,
+                   help="only log alerts that were active in this many recent hours")
+    s.add_argument("--now", help="local time to treat as now (replays, tests)")
+    s.set_defaults(func=_cmd_score)
+
+    s = sub.add_parser("alerts", help="list logged alerts"); s.add_argument("--db", required=True)
+    s.add_argument("--last", type=int, default=20)
+    s.set_defaults(func=_cmd_alerts)
+
+    s = sub.add_parser("evaluate", help="score detectors on simulated anomalies")
+    s.add_argument("--seeds", type=int, default=5); s.add_argument("--days", type=int, default=42)
+    s.add_argument("--out", help="write the markdown table here")
+    s.set_defaults(func=_cmd_evaluate)
 
     s = sub.add_parser("init-db"); s.add_argument("--db", required=True)
     s.set_defaults(func=_cmd_init)

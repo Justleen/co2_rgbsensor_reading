@@ -35,6 +35,16 @@ CONTEXT_METRICS = {
     "airstone_on": "aquarium_airstone_on",
     "temperature": "aquarium_temperature_celsius",
     "ph": "aquarium_ph",
+    "light_pct": "aquarium_light_dim_percent",  # firmware v0.4+ dimmer level
+}
+# Sensor health series exposed by the firmware (v0.6), used by the fault rules.
+HEALTH_METRICS = {
+    "seq": METRIC_READ_SEQ,
+    "i2c_errors": METRIC_I2C_ERRORS,
+    "saturated_flag": "tcs34725_saturated",
+    "id_ok": "tcs34725_id_ok",
+    "atime": METRIC_ATIME,
+    "gain": METRIC_GAIN,
 }
 # Simulated or backfilled data is written with this label so it never mixes
 # with the scraped series. Real scraped series have no "source" label.

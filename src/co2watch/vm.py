@@ -18,7 +18,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import (CHANNELS, CONTEXT_METRICS, LED_STATES, METRIC_RAW, SOURCE_LABEL, TZ)
+from .config import (CHANNELS, CONTEXT_METRICS, HEALTH_METRICS, LED_STATES, METRIC_RAW,
+                     SOURCE_LABEL, TZ)
 from .features import FRAME_COLS
 
 
@@ -75,9 +76,10 @@ def read_frames(base_url: str, start, end, source: str | None = None) -> pd.Data
 
 
 def read_context(base_url: str, start, end, source: str | None = None) -> pd.DataFrame:
-    """Controller states that exist in VM (missing ones are simply absent)."""
+    """Controller states and sensor health series that exist in VM (missing
+    ones are simply absent)."""
     out = {}
-    for col, metric in CONTEXT_METRICS.items():
+    for col, metric in {**CONTEXT_METRICS, **HEALTH_METRICS}.items():
         ser = export_series(base_url, _sel(metric, source), start, end)
         if ser:
             s = ser[0]
@@ -119,7 +121,7 @@ def to_prometheus_lines(df: pd.DataFrame, source: str) -> list[str]:
             for t, v in zip(ts_ms, df[col].to_numpy(dtype=float)):
                 if np.isfinite(v):
                     lines.append(f"{METRIC_RAW}{lab} {v:g} {t}")
-    for col, metric in CONTEXT_METRICS.items():
+    for col, metric in {**CONTEXT_METRICS, **HEALTH_METRICS}.items():
         if col in df:
             lab = f'{{{SOURCE_LABEL}="{source}"}}'
             for t, v in zip(ts_ms, df[col].to_numpy(dtype=float)):

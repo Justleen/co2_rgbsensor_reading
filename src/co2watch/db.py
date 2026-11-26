@@ -168,6 +168,27 @@ def log_alert(con, start, end, score: float, kind: str, reason: str,
     return int(cur.lastrowid)
 
 
+def upsert_alert(con, start, end, score: float, kind: str, reason: str,
+                 model_version: str | None = None, details: dict | None = None,
+                 merge_gap_min: int = 30) -> tuple[int, bool]:
+    """Extend an existing alert of the same kind that overlaps (or ends within
+    ``merge_gap_min`` of) this one, else insert. Returns (id, created)."""
+    s_ms, e_ms = ms(start), ms(end)
+    row = con.execute(
+        "SELECT id, start_ms, end_ms, score FROM alerts WHERE kind = ? AND end_ms >= ? "
+        "AND start_ms <= ? ORDER BY start_ms DESC LIMIT 1",
+        (kind, s_ms - merge_gap_min * 60_000, e_ms)).fetchone()
+    if row:
+        i, s0, e0, sc0 = row
+        con.execute("UPDATE alerts SET start_ms=?, end_ms=?, score=?, reason=?, details_json=? "
+                    "WHERE id=?", (min(s0, s_ms), max(e0 or e_ms, e_ms), max(sc0 or 0, score),
+                                   reason, json.dumps(details, default=str) if details else None,
+                                   i))
+        con.commit()
+        return int(i), False
+    return log_alert(con, start, end, score, kind, reason, model_version, details), True
+
+
 def read_alerts(con) -> pd.DataFrame:
     df = pd.read_sql_query("SELECT * FROM alerts ORDER BY start_ms", con)
     for c in ("start_ms", "end_ms"):

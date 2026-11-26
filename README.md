@@ -24,6 +24,7 @@ The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-che
 |---|---|
 | `firmware/` | D1 mini sketch: two-frame sensor readings, `/metrics`, light dimmer and schedule, web page, OTA, local page emulator (see `firmware/README.md`) |
 | `docs/design.md` | decisions, architecture, `/metrics` contract, roadmap, open items |
+| `docs/detection.md` | M2 detectors, how alerts are scored and explained, evaluation on simulated data |
 | `docs/deploy.md` | Helm install on k3s, labelling via the toolbox pod, backups, troubleshooting |
 | `deploy/helm/co2watch/` | Helm chart: namespace, SQLite PVC, toolbox pod, CronJobs |
 | `Dockerfile`, `.github/workflows/image.yml` | multi-arch image (amd64 + arm64) pushed to GHCR on a version tag |
@@ -31,6 +32,7 @@ The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-che
 | `src/co2watch/db.py` | SQLite: labels, calibration events, alert log, model registry |
 | `src/co2watch/features.py` | LED off/on frame subtraction, hue, ratios, UTC grid, rolling features, local time |
 | `src/co2watch/simulator.py` | synthetic tank + drop checker + two-frame sensor, with injectable anomalies |
+| `src/co2watch/detect.py`, `evaluate.py` | M2 detection and its evaluation on simulated anomalies |
 | `src/co2watch/calibration.py` | self-calibration against the leaflet chart, drift report |
 | `src/co2watch/config.py` | leaflet chart (KH4), metric names, priors |
 | `tests/` | unit tests (`pytest`), including a fake VM for the import/export round trip |
