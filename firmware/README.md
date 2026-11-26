@@ -72,7 +72,7 @@ In the emulator the schedule graph is editable by dragging. The 100 % stretch is
 a bar of exactly "Hours at 100 %" hours (default 7): drag it to move the whole
 day, change the field to resize it. Other points drag one by one (5 min snap);
 before the bar they stay below 100 %, and from the first point after it the
-light stays at 40 % or lower (shaded). The fade straight after the bar may pass
+light stays at 40 % or lower. The fade straight after the bar may pass
 above 40 %. Only switching on from 0 % or off to 0 % may be a step; everything
 else fades. Nothing is stored until Save schedule. Since v0.5.0 the D1 serves this
 too (`drag:true` in `/api/state`) and stores the hours value with the schedule
