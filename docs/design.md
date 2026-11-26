@@ -189,6 +189,12 @@ show for a Grafana stack on lap1. `co2watch serve` (in the toolbox pod)
 serves one plain HTML/JS page in the style of the D1's page, read-only, from
 SQLite plus a cached VictoriaMetrics read. See `docs/deploy.md`.
 
+**Two pages, two jobs (leen, 2026-11-26).** The D1 page is the quick glance:
+CO2 as a percentage, no hue. The co2watch status page is the detailed
+"dirty data" view: hue, raw channels, LED-lit and stray light levels, scores,
+the learned normal band and the alert reasons with their numbers. Keep the
+technical detail on the status page; simplify the D1 page instead.
+
 ## 5. Storage
 
 **Retention split (leen, 2026-11-26).** VictoriaMetrics keeps full-resolution
