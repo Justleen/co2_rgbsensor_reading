@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.4.6"
+#define FW_VERSION "0.5.1"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -71,6 +71,7 @@ static const uint8_t DIM_FIRST_BOOT_PCT = 0;  // used until a level is ever set
 static const uint8_t EEPROM_MAGIC = 0xD1;
 static const uint8_t EEPROM_WB_MAGIC = 0xB4;  // byte 2; gains at bytes 4..15
 static const uint8_t EEPROM_SCHED_MAGIC = 0x5C;  // byte 16; enable 17; points 18..49
+static const int EEPROM_MAXH = 50;  // hours at 100 %, in half hours (1..32)
 
 // ---- schedule ---------------------------------------------------------------
 static const char *TZ_AMSTERDAM = "CET-1CEST,M3.5.0,M10.5.0/3";
@@ -121,6 +122,7 @@ uint8_t dimPct = 0;     // last manual level
 float dimOut = 0;       // what D6 actually outputs, in %
 SchedPoint sched[8];
 bool schedEnabled = false;
+float schedMaxH = 7;   // hours at 100 % (the page enforces it while editing)
 bool overrideActive = false;
 uint32_t overrideStart = 0;
 const char *dimSource = "manual";  // manual / schedule / override / safe
@@ -320,6 +322,7 @@ void schedSave() {
   EEPROM.write(16, EEPROM_SCHED_MAGIC);
   EEPROM.write(17, schedEnabled);
   EEPROM.put(18, sched);
+  EEPROM.write(EEPROM_MAXH, (uint8_t)(schedMaxH * 2 + 0.5f));
   EEPROM.commit();
 }
 
@@ -334,6 +337,8 @@ void schedLoad() {
   EEPROM.get(18, p);
   if (!schedValid(p)) return;
   memcpy(sched, p, sizeof sched);
+  uint8_t hh = EEPROM.read(EEPROM_MAXH);
+  if (hh >= 1 && hh <= 32) schedMaxH = hh / 2.0f;
 }
 
 // Called every second.
@@ -367,7 +372,9 @@ void sendSchedule() {
     b += sched[k].min; b += ','; b += sched[k].level; b += ','; b += sched[k].ramp;
     b += ']';
   }
-  b += "]}";
+  b += "],\"maxh\":";
+  b += String(schedMaxH, 1);
+  b += "}";
   server.send(200, "application/json", b);
 }
 
@@ -408,7 +415,17 @@ void handleSchedule() {
     overrideActive = false;
   }
   if (server.hasArg("resume")) overrideActive = false;
-  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("en")) schedSave();
+  if (server.hasArg("maxh")) {
+    float h = server.arg("maxh").toFloat();
+    if (!(h >= 0.5f && h <= 16.0f)) {
+      server.send(400, "text/plain", "maxh must be 0.5-16 hours\n");
+      return;
+    }
+    schedMaxH = (int)(h * 2 + 0.5f) / 2.0f;
+  }
+  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("en") ||
+      server.hasArg("maxh"))
+    schedSave();
   schedTick();
   sendSchedule();
 }
@@ -511,7 +528,7 @@ void handleState() {
       overrideActive ? (OVERRIDE_MS - (millis() - overrideStart)) / 1000UL : 0;
   char b[800];
   snprintf(b, sizeof b,
-           "{\"version\":\"" FW_VERSION "\",\"seq\":%lu,\"age\":%lu,\"saturated\":%s,\"i2c_errors\":%lu,"
+           "{\"version\":\"" FW_VERSION "\",\"drag\":true,\"seq\":%lu,\"age\":%lu,\"saturated\":%s,\"i2c_errors\":%lu,"
            "\"off\":[%u,%u,%u,%u],\"on\":[%u,%u,%u,%u],"
            "\"colour\":{\"ok\":%s,\"net\":[%d,%d,%d],\"rgb\":[%u,%u,%u],\"hex\":\"%s\",\"hue\":%.1f},"
            "\"wb\":[%.4f,%.4f,%.4f],\"dim\":{\"level\":%.1f,\"min\":%u,\"max\":%u,"

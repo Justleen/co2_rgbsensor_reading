@@ -59,7 +59,7 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
 <div id="dragHint" style="display:none"><div class="row" style="margin-top:6px"><label>Hours at 100 %
 <input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label></div>
-<small class="mut">Preview: full light (100 %) lasts exactly this many hours. Drag the thick 100 % bar to move the whole day; drag the other points to shape the ramps (time snaps to 5 min). After the bar the light fades to the next point, and from there it stays at 40 % or lower (shaded). Only switching on from 0 % or off to 0 % can be instant (step); everything else fades. Press Save schedule to keep it.</small></div>
+<small class="mut">Full light (100 %) lasts exactly this many hours. Drag the thick 100 % bar to move the whole day; drag the other points to shape the ramps (time snaps to 5 min). After the bar the light fades to the next point, and from there it stays at 40 % or lower. Only switching on from 0 % or off to 0 % can be instant (step); everything else fades. Press Save schedule to keep it.</small></div>
 <table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
 <div class="row" style="margin-top:10px"><button onclick="saveSch()">Save schedule</button>
 <button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div>
@@ -88,7 +88,7 @@ function rules(p){const L=[];for(let m=0;m<1440;m++)L.push(lvAt(p,m));const mx=M
  let off=-1;for(let k=pk;k<pk+1440;k++)if(L[k%1440]<60){off=k%1440;break}
  return{co2on:(pk-120+1440)%1440,co2off:off,co2:m=>off<0||inWin(m,(pk-120+1440)%1440,off),air:m=>L[Math.floor(m)%1440]<40}}
 let hasRelays=0,dragOn=0;
-// --- Drag-to-edit (preview, emulator only) ---------------------------------
+// --- Drag-to-edit (firmware >= 0.5.0 sends drag:true; the emulator sends preview) ---------------------------------
 // Time snaps to 5 min, level to 1 %. Points stay in time order. The 100 % plateau
 // (first point at 100 % and the next one) is a bar of exactly maxh hours: drag it
 // anywhere along its length to move the whole day (all points keep their relative
@@ -141,14 +141,12 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.ge
  if(dragOn){const pl=plateauIdx(p);if(pl>=0){const xa=X(p[pl][0]),xb=X(p[pl+1][0]);x.strokeStyle='#e0a020';x.lineWidth=8;x.lineCap='round';
   x.beginPath();x.moveTo(xa,Y(100));x.lineTo(xb,Y(100));x.stroke();x.lineWidth=1;x.lineCap='butt';x.fillStyle='#000';x.font='bold 10px system-ui';
   x.fillText('⟷ '+(maxMin()/60)+' h',(xa+xb)/2-16,Y(100)+3.5);x.font='10px system-ui'}}
- if(dragOn){const pl=plateauIdx(p);if(pl>=0&&pl+2<8){const xe=X(p[pl+2][0]);x.fillStyle='rgba(200,60,60,.12)';x.fillRect(xe,Y(100),X(1440)-xe,Y(AFTER_CAP)-Y(100));
-  x.strokeStyle='rgba(200,60,60,.6)';x.setLineDash([4,3]);x.beginPath();x.moveTo(xe,Y(AFTER_CAP));x.lineTo(X(1440),Y(AFTER_CAP));x.stroke();x.setLineDash([])}}
  if(hasRelays){const R=rules(p),lanes=[['CO2','#2e8b57',m=>R.co2(m)&&!R.air(m),158],['Air','#3b7dd8',R.air,176]];
   for(const[nm,col,f,y]of lanes){x.fillStyle='rgba(128,128,128,.15)';x.fillRect(X(0),y,X(1440)-X(0),12);x.fillStyle=col;
    let st=null;for(let m=0;m<=1440;m++){const on=m<1440&&f(m);if(on&&st==null)st=m;if(!on&&st!=null){x.fillRect(X(st),y,X(m)-X(st),12);st=null}}
    x.fillStyle=fg;x.fillText(nm,0,y+10)}
   x.strokeStyle='rgba(128,128,128,.5)';x.setLineDash([3,3]);for(const v of[60,40]){x.beginPath();x.moveTo(X(0),Y(v));x.lineTo(X(1440),Y(v));x.stroke()}x.setLineDash([])}
- if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(0));x.lineTo(X(nowMin),hasRelays?188:Y(0));x.stroke()}}
+ if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(100));x.lineTo(X(nowMin),hasRelays?188:Y(0));x.stroke()}}
 function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
  S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
  tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)try{fixSteps(readTb())}catch(e){}draw()};$('en').checked=S.en;if(S.maxh)$('maxh').value=S.maxh;if(dragOn)try{fixSteps(readTb())}catch(e){}schDirty=0;draw()}
@@ -167,7 +165,7 @@ async function setRelay(k,on){const c=$('rl_'+k);rlBusy[k]=1;c.disabled=true;
  catch(e){bad('No answer from the board');c.checked=!on}finally{rlBusy[k]=0;c.disabled=false}}
 function show(s){
  showRelays(s.relays,s.relay_src);
- if(s.preview&&!dragOn)initDrag();
+ if((s.preview||s.drag)&&!dragOn)initDrag();
  $('ver').textContent='v'+s.version;
  $('sw').style.background=s.colour.ok?s.colour.hex:'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';
