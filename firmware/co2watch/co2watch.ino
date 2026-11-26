@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.6.3"
+#define FW_VERSION "0.6.4"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -258,6 +258,9 @@ void takeReading() {
     hueHist[hueHead] = col.hue;
     hueHead = (hueHead + 1) % IDX_SMOOTH;
     if (hueN < IDX_SMOOTH) hueN++;
+  } else {
+    hueN = 0;  // a failed reading must not leave a stale index in /metrics
+    hueHead = 0;
   }
 
   Serial.printf(
