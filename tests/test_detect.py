@@ -67,3 +67,30 @@ def test_upsert_alert_merges(tmp_path):
     assert c1 and not c2 and c3 and i1 == i2 != i3
     al = db.read_alerts(con)
     assert len(al) == 2 and al.loc[al["id"] == i1, "score"].iloc[0] == 2.0
+
+
+def test_archive_aggregates_and_raw_windows(tmp_path):
+    from co2watch import archive
+    from co2watch.features import FRAME_COLS
+    res = simulate(days=10, seed=3, anomalies=[AnomalySpec("stuck", day=8, hour=9,
+                                                            duration_h=2)])
+    df = prepare(res.readings)
+    con = db.connect(tmp_path / "a.sqlite")
+    now = df.index[-1] + pd.Timedelta("5min")
+    keep = archive.complete_days(df, now - pd.Timedelta("1h"))
+    h = archive.hourly(keep)
+    d = archive.daily(keep)
+    assert archive.save_hourly(con, h) == len(h) and archive.save_daily(con, d) == len(d)
+    assert archive.save_hourly(con, h) == len(h)  # idempotent
+    assert con.execute("SELECT COUNT(*) FROM agg_hourly").fetchone()[0] == len(h)
+    day = d.set_index("local_date").loc["2026-10-15"]
+    assert 200 < day["night_hue"] < 240 and 90 < day["peak_hue"] < 130
+    assert day["rise_t50_local"] < day["rise_t90_local"]
+    # one alert -> one raw window, archived once
+    a_start = res.labels.iloc[0]["start"]
+    db.log_alert(con, a_start, a_start + pd.Timedelta("2h"), 2.0, "stuck", "x")
+    (src, s, e), = archive.event_windows(con, pad_h=1)
+    n = archive.save_raw_window(con, src, res.readings.loc[s:e, FRAME_COLS])
+    assert n == 4 * 12 + 1 and archive.event_windows(con, pad_h=1) == []
+    back = archive.read_raw_window(con, src)
+    assert len(back) == n and list(back.columns) == FRAME_COLS
