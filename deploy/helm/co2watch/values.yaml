@@ -66,16 +66,16 @@ containerSecurityContext:
 #   kubectl -n co2watch exec -it deploy/co2watch-toolbox -- sqlite3 /data/co2watch.sqlite
 toolbox:
   enabled: true
-  resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 256Mi}
+  resources:            # sized for the status page it also serves
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 512Mi}
 
 # --- Status page ----------------------------------------------------------------
-# `co2watch serve`: one small page with the drop checker over the last 48 h and
-# its learned normal band, alerts with their reasons, job runs and the daily
-# shape. Read-only; recomputes at most every cacheSeconds while someone looks.
-# On the LAN at http://<any node IP>:<nodePort>/ (NodePort; k3s also serves it
-# on every node). Needs image 0.4.0+.
+# The toolbox pod also runs `co2watch serve`: one small page with the drop checker
+# over the last 48 h and its learned normal band, alerts with their reasons, job
+# runs and the daily shape. Read-only; recomputes at most every cacheSeconds
+# while someone looks. On the LAN at http://<any node IP>:<nodePort>/.
+# enabled: false = the toolbox just sleeps, as before. Needs image 0.4.0+.
 web:
   enabled: true
   port: 8080
@@ -83,9 +83,6 @@ web:
   service:
     type: NodePort       # or ClusterIP behind your own ingress
     nodePort: 30880
-  resources:
-    requests: {cpu: 20m, memory: 128Mi}
-    limits: {memory: 512Mi}
 
 # --- Scheduled jobs -------------------------------------------------------------
 # Each entry becomes a CronJob. Schedules are in `timezone`.

@@ -31,7 +31,44 @@ spec:
       containers:
         - name: toolbox
           {{- include "co2watch.containerCommon" . | nindent 10 }}
+          {{- if .Values.web.enabled }}
+          # The toolbox also serves the status page (`co2watch serve`); kubectl exec
+          # into it works as before. Readiness only, no liveness probe, so a slow
+          # page never restarts the pod under an open exec session.
+          args: ["serve", "--db", "$(DB)", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)",
+                 "--port", "{{ .Values.web.port }}", "--cache-seconds", "{{ .Values.web.cacheSeconds }}"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 30
+          {{- else }}
           command: ["sleep", "infinity"]
+          {{- end }}
           resources:
             {{- toYaml .Values.toolbox.resources | nindent 12 }}
+{{- if .Values.web.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: co2watch-web
+  namespace: {{ include "co2watch.ns" . }}
+  labels:
+    {{- include "co2watch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: toolbox
+spec:
+  type: {{ .Values.web.service.type }}
+  selector:
+    app.kubernetes.io/name: co2watch
+    app.kubernetes.io/component: toolbox
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      {{- if and (eq .Values.web.service.type "NodePort") .Values.web.service.nodePort }}
+      nodePort: {{ .Values.web.service.nodePort }}
+      {{- end }}
+{{- end }}
 {{- end }}

@@ -32,7 +32,7 @@ co2watch serve --db data/labels.sqlite --vm http://<vm-host>:8428 --port 8080
 co2watch serve --db data/labels.sqlite --csv data/sim/sim_readings.csv   # local mock
 ```
 
-On k3s the chart runs it as `co2watch-web` on NodePort 30880 (see
+On k3s the toolbox pod runs it, on NodePort 30880 (see
 [docs/deploy.md](docs/deploy.md)).
 
 ## What's here

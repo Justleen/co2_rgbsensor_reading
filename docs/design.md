@@ -185,7 +185,7 @@ hand. Nothing here has been measured on the tank.
   LED ageing is itself a slow-drift source to watch.
 
 **Status page instead of Grafana (leen, 2026-11-26).** There is too little to
-show for a Grafana stack on lap1. `co2watch serve` (Deployment `co2watch-web`)
+show for a Grafana stack on lap1. `co2watch serve` (in the toolbox pod)
 serves one plain HTML/JS page in the style of the D1's page, read-only, from
 SQLite plus a cached VictoriaMetrics read. See `docs/deploy.md`.
 
