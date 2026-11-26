@@ -29,11 +29,6 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div id="sw"></div>
 <div class="row" style="margin-top:10px"><span class="big" id="hex">-</span><span class="big" id="hue">-</span></div>
 <small id="info">loading...</small>
-<table style="margin-top:8px"><tr><th></th><th>red</th><th>green</th><th>blue</th><th>clear</th></tr>
-<tr><td>LEDs off</td><td id="o0"></td><td id="o1"></td><td id="o2"></td><td id="o3"></td></tr>
-<tr><td>LEDs on</td><td id="n0"></td><td id="n1"></td><td id="n2"></td><td id="n3"></td></tr>
-<tr><td>net</td><td id="d0"></td><td id="d1"></td><td id="d2"></td><td></td></tr>
-<tr><td>white gain</td><td id="g0"></td><td id="g1"></td><td id="g2"></td><td></td></tr></table>
 <div class="row" style="margin-top:10px"><button onclick="act('/read')">Take reading now</button>
 <button onclick="if(confirm('Use the current reading as white? Do this with the sensor on the white backing.'))act('/white?set=1')">Use as white reference</button>
 <button onclick="act('/white?reset=1')">Reset white</button></div>
@@ -46,19 +41,8 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <div class="row" style="margin-top:8px"><label>low hue <input type="number" id="idxlo" step="0.1" style="width:5em"></label>
 <label>high hue <input type="number" id="idxhi" step="0.1" style="width:5em"></label><button onclick="idxSave()">Save ends</button></div>
 <div class="row" style="margin-top:6px"><button onclick="act('/api/co2index?low=now')">Set low = now</button>
-<button onclick="act('/api/co2index?high=now')">Set high = now</button><button onclick="act('/api/co2index?reset=1')">Default ends</button></div>
-<small class="mut">Zooms into the drop checker's colour band: the hue (average of the last 3 readings) is mapped so the low end is 0 % and the high end is 100 %. Default ends are the leaflet's 3 and 50 mg/l colours, not calibrated to this sensor: set "low" when the checker is fully blue (early morning, CO2 off) and "high" at the colour you consider too much.</small></div>
+<button onclick="act('/api/co2index?high=now')">Set high = now</button><button onclick="act('/api/co2index?reset=1')">Default ends</button></div></div>
 </section>
-<section id="relays" style="display:none"><h2>Relays<span class="badge">preview</span></h2>
-<div class="rl" id="rl"></div>
-<ul class="mut" style="margin:8px 0 0;padding-left:18px;font-size:13px">
-<li>Switches show the live relay state</li>
-<li><b>CO2</b> (auto): 2 h before peak, until light &lt; 60 %</li>
-<li><b>Air</b> (auto): light &lt; 40 %</li>
-<li>Manual toggle = 1 h override</li>
-<li>Air on &rarr; CO2 forced off</li>
-<li>Heat &amp; Pump: manual</li>
-<li>Preview only, not wired</li></ul></section>
 <section><h2>Light dimmer</h2>
 <div class="row"><input type="range" id="lv" min="0" max="100" oninput="editing=1;lvo.textContent=this.value+' %'" onchange="setDim()">
 <span class="big" id="lvo">-</span><button onclick="setDim()">Set</button></div>
@@ -69,12 +53,10 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <span class="mut" id="clk"></span></div>
 <canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
 <div id="dragHint" style="display:none"><div class="row" style="margin-top:6px"><label>Hours at 100 %
-<input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label></div>
-<small class="mut">Full light (100 %) lasts exactly this many hours. Drag the thick 100 % bar to move the whole day; drag the other points to shape the ramps (time snaps to 5 min). After the bar the light fades to the next point, and from there it stays at 40 % or lower. Only switching on from 0 % or off to 0 % can be instant (step); everything else fades. Press Save schedule to keep it.</small></div>
+<input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label></div></div>
 <table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
 <div class="row" style="margin-top:10px"><button onclick="saveSch()">Save schedule</button>
-<button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div>
-<small>Each point fades to the next one: smooth (sunrise-like), linear, or step (jump at the next point). A manual change pauses the schedule for 1 hour. Without NTP time the light goes to 30 %.</small></section>
+<button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div></section>
 </main><script>
 const $=id=>document.getElementById(id);let busy=0,editing=0,S=null,schDirty=0,nowMin=null,lastBtn=null;
 document.addEventListener('click',e=>{lastBtn=e.target.closest('button')},true);
@@ -141,7 +123,7 @@ function initDrag(){dragOn=1;const c=$('cv');c.style.touchAction='none';$('dragH
   {m=Math.max(lo(drag),Math.min(hi(drag),m));const cap=pl<0?100:drag<pl?99:AFTER_CAP;v=Math.max(0,Math.min(cap,v));p[drag]=[m,v,p[drag][2]]}
   writeTb(p);schDirty=1;draw()});
  const end=()=>{drag=-1;c.style.cursor=''};c.addEventListener('pointerup',end);c.addEventListener('pointercancel',end)}
-function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.getContext('2d');c.width=w;c.height=H;
+function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=192,x=c.getContext('2d');c.width=w;c.height=H;
  let p=S.pts;if(schDirty)try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){}
  const cs=getComputedStyle(document.body),fg=cs.color,X=m=>m/1440*(w-30)+25,Y=v=>h-18-v/100*(h-28);
  x.clearRect(0,0,w,h);x.font='10px system-ui';x.fillStyle=fg;x.strokeStyle='rgba(128,128,128,.3)';
@@ -152,12 +134,12 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=150,H=hasRelays?192:150,x=c.ge
  if(dragOn){const pl=plateauIdx(p);if(pl>=0){const xa=X(p[pl][0]),xb=X(p[pl+1][0]);x.strokeStyle='#e0a020';x.lineWidth=8;x.lineCap='round';
   x.beginPath();x.moveTo(xa,Y(100));x.lineTo(xb,Y(100));x.stroke();x.lineWidth=1;x.lineCap='butt';x.fillStyle='#000';x.font='bold 10px system-ui';
   x.fillText('⟷ '+(maxMin()/60)+' h',(xa+xb)/2-16,Y(100)+3.5);x.font='10px system-ui'}}
- if(hasRelays){const R=rules(p),lanes=[['CO2','#2e8b57',m=>R.co2(m)&&!R.air(m),158],['Air','#3b7dd8',R.air,176]];
+ {const R=rules(p),lanes=[['CO2','#2e8b57',m=>R.co2(m)&&!R.air(m),158],['Air','#3b7dd8',R.air,176]];
   for(const[nm,col,f,y]of lanes){x.fillStyle='rgba(128,128,128,.15)';x.fillRect(X(0),y,X(1440)-X(0),12);x.fillStyle=col;
    let st=null;for(let m=0;m<=1440;m++){const on=m<1440&&f(m);if(on&&st==null)st=m;if(!on&&st!=null){x.fillRect(X(st),y,X(m)-X(st),12);st=null}}
    x.fillStyle=fg;x.fillText(nm,0,y+10)}
   x.strokeStyle='rgba(128,128,128,.5)';x.setLineDash([3,3]);for(const v of[60,40]){x.beginPath();x.moveTo(X(0),Y(v));x.lineTo(X(1440),Y(v));x.stroke()}x.setLineDash([])}
- if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(100));x.lineTo(X(nowMin),hasRelays?188:Y(0));x.stroke()}}
+ if(nowMin!=null){x.strokeStyle='#d33';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(100));x.lineTo(X(nowMin),188);x.stroke()}}
 function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
  S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
  tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)try{fixSteps(readTb())}catch(e){}draw()};$('en').checked=S.en;if(S.maxh)$('maxh').value=S.maxh;if(dragOn)try{fixSteps(readTb())}catch(e){}schDirty=0;draw()}
@@ -167,7 +149,7 @@ function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){bad(e);r
  let extra='';if(dragOn){if(constrain(p)){writeTb(p);draw()}extra='&maxh='+(maxMin()/60)}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){bad('Two points have the same time');return}
  sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';'))+extra)}
 const RL={co2:'CO2',air:'Air',heat:'Heat',pump:'Pump'},rlBusy={};
-function showRelays(r,src){const sec=$('relays');if(!r){sec.style.display='none';hasRelays=0;return}sec.style.display='';hasRelays=1;src=src||{};const box=$('rl');
+function showRelays(r,src){const sec=$('relays');hasRelays=r?1:0;if(!sec||!r){if(sec)sec.style.display='none';return}sec.style.display='';src=src||{};const box=$('rl');
  for(const k in RL){if(!(k in r))continue;let c=$('rl_'+k);
   if(!c){const l=document.createElement('label');l.innerHTML='<span class="sw"><input type="checkbox" id="rl_'+k+'"><i></i></span>'+RL[k]+' <small class="mut" id="rs_'+k+'"></small>';box.appendChild(l);c=$('rl_'+k);c.onchange=()=>setRelay(k,c.checked)}
   if(!rlBusy[k])c.checked=!!r[k];$('rs_'+k).textContent={schedule:'auto',override:'manual 1 h',safe:'safe',interlock:'off: air is on'}[src[k]]||''}}
@@ -189,8 +171,6 @@ function show(s){
  $('hex').textContent=s.colour.ok?s.colour.hex:'no colour';
  $('hue').textContent=s.colour.ok?'hue '+s.colour.hue.toFixed(1)+'°':'';
  $('info').textContent=s.seq?('reading #'+s.seq+', '+s.age+' s ago'+(s.saturated?', SATURATED':'')+', i2c errors '+s.i2c_errors):'no reading yet';
- for(let i=0;i<4;i++){$('o'+i).textContent=s.off[i];$('n'+i).textContent=s.on[i];}
- for(let i=0;i<3;i++){$('d'+i).textContent=s.colour.net[i];$('g'+i).textContent=s.wb[i].toFixed(3);}
  const lv=$('lv');lv.min=s.dim.min;lv.max=s.dim.max;
  if(!editing){lv.value=Math.round(s.dim.level);$('lvo').textContent=s.dim.level+' %';}
  const src={manual:'manual',schedule:'following the schedule',override:'manual override, schedule resumes in '+Math.ceil(s.dim.override_left/60)+' min',safe:'no time yet: safe level'}[s.dim.source];

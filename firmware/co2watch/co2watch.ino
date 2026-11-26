@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.6.0"
+#define FW_VERSION "0.6.1"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -77,10 +77,10 @@ static const int EEPROM_IDX = 52;   // magic 0xC1; float low hue @54, high hue @
 // ---- CO2 index ----------------------------------------------------------------
 // Zooms into the drop checker's colour band: the (white-balanced, smoothed) hue
 // is mapped linearly so that IDX_LOW_HUE = 0 % (blue, low CO2) and IDX_HIGH_HUE =
-// 100 % (lime/yellow, high CO2). Defaults are the leaflet's 3 and 50 mg/l bands
-// (KH4) - NOT calibrated to this sensor; set both ends from real readings on the
+// 100 % (high CO2). Low default is the leaflet's 3 mg/l hue; high default is the
+// end leen set on the D1 on 2026-11-26. Set both ends from real readings on the
 // page. Not clamped, so values below 0 or above 100 mean "outside the range".
-static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 64;
+static const float IDX_DEFAULT_LOW = 203, IDX_DEFAULT_HIGH = 153.5;  // ends set on the D1 2026-11-26
 static const uint8_t IDX_SMOOTH = 3;  // readings averaged (3 x 5 min)
 
 // ---- schedule ---------------------------------------------------------------
@@ -89,11 +89,11 @@ static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // manual hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default (leen, 2026-11-25): at least 7 h at 100 % (11:00-18:00), 30 % until
-// 20:30, off by 21:30.
+// Default = the schedule saved on the D1 on 2026-11-26 (7 h at 100 % 11:00-18:00,
+// 40 % at 18:30, 25 % at 19:55, off by 21:30).
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {420, 4, 1},    {480, 15, 0},  {510, 40, 0},   {660, 100, 0},
-    {1080, 100, 0}, {1140, 30, 0}, {1230, 30, 0},  {1290, 0, 1}};
+    {420, 4, 1},    {480, 15, 0},  {510, 40, 0},  {660, 100, 0},
+    {1080, 100, 0}, {1110, 40, 0}, {1195, 25, 0}, {1290, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
