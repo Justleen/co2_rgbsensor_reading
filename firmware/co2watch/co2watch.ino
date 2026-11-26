@@ -44,7 +44,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.7.0"
+#define FW_VERSION "0.7.1"
 
 // ---- light ------------------------------------------------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -60,11 +60,11 @@ static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // "Set to max" hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default = the schedule saved on the D1 on 2026-11-26 23:08 (7 h at 100 %
-// 11:00-18:00; 18 % at 09:00, 40 % at 09:50; 40 % at 18:30, 25 % at 19:55, off 21:00).
+// Default = the schedule saved on the D1 on 2026-11-27 00:45 (6 h at 100 %
+// 11:00-17:00; 06:45 4 %, 09:25 23 %, 10:35 43 %; 17:15 40 %, 18:50 33 %, off 20:00).
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {420, 4, 1},    {540, 18, 0},  {590, 40, 0},  {660, 100, 0},
-    {1080, 100, 0}, {1110, 40, 0}, {1195, 25, 0}, {1260, 0, 1}};
+    {405, 4, 1},    {565, 23, 0},  {635, 43, 0},  {660, 100, 0},
+    {1020, 100, 0}, {1035, 40, 0}, {1130, 33, 0}, {1200, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
@@ -122,7 +122,7 @@ struct Settings {
 void settingsDefaults() {
   cfg.version = SETTINGS_VERSION;
   memcpy(cfg.sched, SCHED_DEFAULT, sizeof cfg.sched);
-  cfg.maxhHalf = 14;
+  cfg.maxhHalf = 12;  // 6 h
   cfg.wb[0] = cfg.wb[1] = cfg.wb[2] = 1;
   cfg.idxLow = IDX_DEFAULT_LOW;
   cfg.idxHigh = IDX_DEFAULT_HIGH;
