@@ -23,7 +23,7 @@ drop checker and drives the light dimmer.
   drops to its minimum for about a second.
 
 - Light schedule (always on after a boot; switching it off on the page lasts until
-  the next reboot; default: 100 % from 11:00 to 18:00,
+  the next reboot; default: 4 % at 07:00, 18 % at 09:00, 40 % at 09:50, 100 % from 11:00 to 18:00,
   40 % at 18:30, 25 % at 19:55, off by 21:30): 8 points (24-hour HH:MM +
   level), each fading to the next one (smooth cosine, linear or step), wrapping
   at midnight. Time from `nl.pool.ntp.org` in Europe/Amsterdam (DST handled).

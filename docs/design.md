@@ -334,3 +334,14 @@ Nothing in this repo applies anything to the cluster.
    * Where does the ML container run (which node)?
 7. Next milestone: M1 (firmware `/metrics`, VM scrape job, measure gain and
    integration time on the tank).
+8. **"Fluid refreshed" button (backlog, not built yet, leen 2026-11-26).** A
+   button on the D1 page that logs a calibration event (`kind=fluid_change`, the
+   same as `co2watch mark-calibration`), so the anomaly model starts a fresh
+   baseline after a drop-checker refill instead of flagging the colour jump.
+   Context: the checker can't be taken off its suction cup, so every refill
+   also shifts its position and colour a little. Planned routine: refill,
+   re-place the sensor roughly, wait about a day for a full CO2 cycle, then
+   re-set the CO2 index Low/High ends. Open questions for when it's built: how
+   the D1 hands the event to the SQLite/ML side (e.g. a `co2watch_calibration_event`
+   counter in `/metrics` that a CronJob turns into a row), and whether it should
+   also reset the Low/High ends to "learning" automatically.

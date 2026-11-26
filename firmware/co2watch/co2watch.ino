@@ -60,7 +60,7 @@ static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.6.2"
+#define FW_VERSION "0.6.4"
 
 // ---- dimmer limits (edit and reflash to change) -----------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -89,10 +89,10 @@ static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // manual hold
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default = the schedule saved on the D1 on 2026-11-26 (7 h at 100 % 11:00-18:00,
-// 40 % at 18:30, 25 % at 19:55, off by 21:30).
+// Default = the schedule saved on the D1 on 2026-11-26 19:03 (7 h at 100 %
+// 11:00-18:00; 18 % at 09:00, 40 % at 09:50; 40 % at 18:30, 25 % at 19:55, off 21:30).
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {420, 4, 1},    {480, 15, 0},  {510, 40, 0},  {660, 100, 0},
+    {420, 4, 1},    {540, 18, 0},  {590, 40, 0},  {660, 100, 0},
     {1080, 100, 0}, {1110, 40, 0}, {1195, 25, 0}, {1290, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
@@ -258,6 +258,9 @@ void takeReading() {
     hueHist[hueHead] = col.hue;
     hueHead = (hueHead + 1) % IDX_SMOOTH;
     if (hueN < IDX_SMOOTH) hueN++;
+  } else {
+    hueN = 0;  // a failed reading must not leave a stale index in /metrics
+    hueHead = 0;
   }
 
   Serial.printf(
