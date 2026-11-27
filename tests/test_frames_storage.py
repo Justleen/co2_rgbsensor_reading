@@ -166,3 +166,18 @@ def test_backup_and_save_anchors(tmp_path):
     import sqlite3
     assert sqlite3.connect(files[-1]).execute("SELECT COUNT(*) FROM anchors").fetchone()[0] \
         == len(anchors)
+
+
+def test_series_from_old_and_new_hostname_are_joined():
+    # the D1 renamed co2watch -> aqua: same metric, two instance labels, back to back
+    from co2watch.vm import series_to_frames
+    t0 = 1_795_000_000_000
+    old = {"metric": {"__name__": "tcs34725_raw", "channel": "red", "led": "on",
+                      "instance": "co2watch.fritz.box:80"},
+           "timestamps": [t0, t0 + 300_000], "values": [1.0, 2.0]}
+    new = {"metric": {"__name__": "tcs34725_raw", "channel": "red", "led": "on",
+                      "instance": "aqua.fritz.box:80"},
+           "timestamps": [t0 + 600_000, t0 + 900_000], "values": [3.0, 4.0]}
+    for order in ([old, new], [new, old]):
+        df = series_to_frames(order)
+        assert df["red_on"].tolist() == [1.0, 2.0, 3.0, 4.0]

@@ -51,18 +51,27 @@ def export_series(base_url: str, match: str, start, end) -> list[dict]:
     return parse_export(_get(f"{base_url.rstrip('/')}/api/v1/export?{q}"))
 
 
+def _merge(parts: list[pd.Series]) -> pd.Series:
+    """Several series for the same quantity (e.g. the D1 scraped under its old
+    and its new hostname, so different ``instance`` labels) -> one series in
+    time order; on duplicate timestamps the last series wins."""
+    s = pd.concat(parts).sort_index(kind="stable")
+    return s[~s.index.duplicated(keep="last")]
+
+
 def series_to_frames(series: list[dict]) -> pd.DataFrame:
     """Raw-metric series -> wide DataFrame with ``red_off .. clear_on`` columns,
-    indexed by sample time (UTC). Samples are kept exactly as stored."""
-    cols = {}
+    indexed by sample time (UTC). Samples are kept exactly as stored. Series
+    that differ only in other labels (instance, job) are joined in time."""
+    parts: dict[str, list[pd.Series]] = {}
     for s in series:
         m = s["metric"]
         name = f"{m.get('channel')}_{m.get('led')}"
         if name not in FRAME_COLS:
             continue
         idx = pd.to_datetime(s["timestamps"], unit="ms", utc=True)
-        cols[name] = pd.Series(s["values"], index=idx, dtype=float)
-    df = pd.DataFrame(cols).sort_index()
+        parts.setdefault(name, []).append(pd.Series(s["values"], index=idx, dtype=float))
+    df = pd.DataFrame({k: _merge(v) for k, v in parts.items()}).sort_index()
     for c in FRAME_COLS:
         if c not in df:
             df[c] = np.nan
@@ -82,9 +91,8 @@ def read_context(base_url: str, start, end, source: str | None = None) -> pd.Dat
     for col, metric in {**CONTEXT_METRICS, **HEALTH_METRICS}.items():
         ser = export_series(base_url, _sel(metric, source), start, end)
         if ser:
-            s = ser[0]
-            out[col] = pd.Series(s["values"], index=pd.to_datetime(s["timestamps"], unit="ms",
-                                                                    utc=True), dtype=float)
+            out[col] = _merge([pd.Series(s["values"], index=pd.to_datetime(
+                s["timestamps"], unit="ms", utc=True), dtype=float) for s in ser])
     df = pd.DataFrame(out).sort_index()
     for c in ("light_on", "co2_on", "airstone_on"):
         if c in df:
