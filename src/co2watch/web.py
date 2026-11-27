@@ -150,8 +150,9 @@ def _raw_colour(row) -> dict | None:
 
 
 def fetch_d1_colour(d1_url: str, timeout: float = 2.0) -> dict:
-    """The D1's own live swatch from its /api/state (white-balanced, as shown on
-    the aqua page). Never raises: returns {"ok": False, "error": ...} instead."""
+    """The top of the D1's own page, from its /api/state: the white-balanced
+    swatch, the reading counter and the D1's CO2 index. Never raises: returns
+    {"ok": False, "error": ...} instead."""
     import urllib.request
     try:
         with urllib.request.urlopen(d1_url.rstrip("/") + "/api/state", timeout=timeout) as r:
@@ -159,7 +160,12 @@ def fetch_d1_colour(d1_url: str, timeout: float = 2.0) -> dict:
         c = st.get("colour") or {}
         if not c.get("ok") or not isinstance(c.get("hex"), str):
             return {"ok": False, "error": "the D1 has no valid colour right now"}
+        idx = st.get("co2idx") or {}
         return {"ok": True, "hex": c["hex"][:7], "hue": _num(c.get("hue"), 1),
+                "seq": st.get("seq"), "age_s": st.get("age"),
+                "saturated": bool(st.get("saturated")), "i2c_errors": st.get("i2c_errors"),
+                "index_pct": _num(idx.get("value"), 1) if idx.get("ok") else None,
+                "version": st.get("version"),
                 "fetched_ms": _ms(pd.Timestamp.now(tz="UTC"))}
     except Exception as e:
         return {"ok": False, "error": f"D1 not reachable: {type(e).__name__}"}

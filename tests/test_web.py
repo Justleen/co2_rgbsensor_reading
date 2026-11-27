@@ -140,7 +140,9 @@ def test_raw_colour_and_d1_colour_fetch(tmp_path, sim):
     st = build_status(con, sim.readings, sim.readings.index[-1] + pd.Timedelta(minutes=5))
     assert st["latest"]["rgb"]["hex"].startswith("#")
 
-    body = json.dumps({"colour": {"ok": True, "hex": "#2BB3A0", "hue": 171.04}}).encode()
+    body = json.dumps({"seq": 7, "age": 12, "saturated": False, "i2c_errors": 0,
+                       "colour": {"ok": True, "hex": "#2BB3A0", "hue": 171.04},
+                       "co2idx": {"ok": True, "value": 41.26}}).encode()
 
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -154,6 +156,7 @@ def test_raw_colour_and_d1_colour_fetch(tmp_path, sim):
     threading.Thread(target=srv.handle_request, daemon=True).start()
     got = fetch_d1_colour(f"http://127.0.0.1:{srv.server_address[1]}/")
     assert got["ok"] and got["hex"] == "#2BB3A0" and got["hue"] == 171.0
+    assert got["seq"] == 7 and got["age_s"] == 12 and got["index_pct"] == 41.3
     srv.server_close()
     bad = fetch_d1_colour(f"http://127.0.0.1:{srv.server_address[1]}", timeout=0.5)
     assert not bad["ok"] and "not reachable" in bad["error"]
