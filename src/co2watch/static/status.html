@@ -37,23 +37,26 @@ tr.sub td{border-bottom:1px solid var(--color-border-subtle);padding-top:0}tr.ma
 @media(max-width:480px){table{font-size:var(--font-size-xs)}td,th{padding:3px 3px}th{letter-spacing:0;text-transform:none}.big{font-size:var(--font-size-2xl)}}
 .al{border-top:1px solid var(--color-border-subtle);padding:var(--space-sm) 0}.al:first-child{border-top:0;padding-top:0}
 .al b{color:var(--color-text-primary)}.al p{margin:var(--space-2xs) 0 0;color:var(--color-text-primary)}
-.cols{display:flex;gap:var(--space-md);flex-wrap:wrap}
-.colr{display:flex;gap:var(--space-sm);align-items:center;min-width:200px;flex:1}
-.colr .sw{width:56px;height:56px}
-.colr div{font-family:var(--font-family-mono);font-size:var(--font-size-sm)}
-.colr small{display:block;font-family:var(--font-family-sans)}
+#bar{flex:1 1 40px;min-width:40px;height:28px;border-radius:var(--radius-sm);border:1px solid var(--color-border);background:#000}
+.idx{margin-top:var(--space-sm);border-top:1px solid var(--bd);padding-top:var(--space-xs)}
+.idx b{color:var(--fg)}.warn{color:var(--color-status-error)}
+.idxv{position:relative;height:16px;margin-top:var(--space-2xs)}.idxv small{position:absolute;bottom:0;left:0;white-space:nowrap}
+.grad{position:relative;height:16px;border-radius:8px;margin:var(--space-2xs) 0 6px;background:linear-gradient(90deg,#2f6fd6,#2bb3a0,#3cb043,#c8d630,#e8d020)}
+.grad i{position:absolute;top:-3px;left:0;width:4px;height:22px;margin-left:-2px;background:var(--fg);border-radius:2px}
+.ends{justify-content:space-between;font-size:var(--font-size-xs)}
 .leg{display:flex;gap:var(--space-sm);flex-wrap:wrap;font-size:var(--font-size-xs);color:var(--color-text-secondary);margin:var(--space-xs) 0}
 .leg i{display:inline-block;width:14px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 </style></head><body><main>
 <h1>Aquarium CO<sub>2</sub> Machine Learning <small id="upd">loading…</small></h1>
 <div id="errs"></div>
 
-<section class="card"><div class="card__header"><h2 class="card__title">Sensor colour now</h2></div>
-<div class="cols">
-<div class="colr"><span class="sw" id="d1sw"></span><div><small>D1 live, white-balanced (as on the aqua page)</small><span id="d1c">-</span></div></div>
-<div class="colr"><span class="sw" id="rawsw"></span><div><small>Last reading, raw net RGB (no white balance)</small><span id="rawc">-</span></div></div>
-</div>
-<small>Measured colours, not the leaflet band swatch below.</small>
+<section class="card"><div class="card__header"><h2 class="card__title">Drop checker colour</h2></div>
+<div class="row"><span class="big" id="hex">-</span><span id="bar"></span></div>
+<small id="cinfo">loading…</small>
+<div class="idx"><div class="row"><b>CO2 index</b><small id="idxwarn" class="warn"></small></div>
+<div class="idxv"><small id="idxv">-</small></div>
+<div class="grad"><i id="idxm"></i></div>
+<div class="row mut ends"><span>0%</span><span>50%</span><span>100%</span></div></div>
 </section>
 
 <section class="card"><div class="card__header"><h2 class="card__title">Now</h2></div>
@@ -107,7 +110,7 @@ function render(){
  const L=D.latest,errs=[...D.errors];
  if(L&&L.age_min>15)errs.unshift('No new readings for '+Math.round(L.age_min)+' min. Is the D1 online and VictoriaMetrics scraping it?');
  if(!L&&!D.errors.length)errs.unshift('No readings available.');
- $('errs').innerHTML=errs.map(e=>'<div class="msg">'+esc(e)+'</div>').join('');
+ showColour();$('errs').innerHTML=errs.map(e=>'<div class="msg">'+esc(e)+'</div>').join('');
  $('upd').textContent='updated '+hhmm(D.now_ms);
  if(L){
   if(L.co2_mg_l!=null){$('co2').textContent='≈ '+L.co2_mg_l+' mg/l';
@@ -116,8 +119,6 @@ function render(){
    $('sw').style.background=BC[L.band]||'#888'}
   else{$('co2').textContent=L.hue!=null?L.hue+'°':'-';$('co2sub').textContent='no calibration yet'}
   $('state').innerHTML=scorePill(L.score)+(L.score>=1&&L.kind?' <small>'+esc(KIND[L.kind]||L.kind)+'</small>':'');
-  const C=L.rgb;$('rawsw').style.background=C?C.hex:'transparent';
-  $('rawc').textContent=C?C.hex+' · hue '+L.hue+'° · net '+C.net.join('/'):'no valid reading';
   $('hue').textContent=hp(L.hue);
   $('norm').textContent=L.normal_hue!=null?hp(L.normal_hue):'learning';
   $('score').textContent=L.score!=null?L.score.toFixed(2)+' / 1.00':'-';
@@ -191,8 +192,21 @@ function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext(
  x.globalAlpha=.55;x.fill();x.globalAlpha=1;x.fillStyle=mut;x.fillText('score',0,sTop+sh/2+3);x.fillText('1.0',R-16,SY(S.threshold)-2)}
 async function load(){try{const r=await fetch('api/status');if(!r.ok)throw new Error('HTTP '+r.status);D=await r.json();render()}
  catch(e){$('errs').innerHTML='<div class="msg">Status not available: '+esc(e.message)+'</div>'}}
-async function loadD1(){let c;try{const r=await fetch('api/d1colour');c=await r.json()}catch(e){c={ok:false,error:'status page not reachable'}}
- $('d1sw').style.background=c.ok?c.hex:'transparent';
- $('d1c').textContent=c.ok?c.hex+' · hue '+c.hue+'° · '+hhmm(c.fetched_ms):c.error}
+// Drop checker colour: the top of the D1's own page. Live from the D1 when it
+// answers (white-balanced, its own CO2 index); otherwise the last reading from
+// VictoriaMetrics (raw net RGB, no white balance) and this page's CO2 index.
+let D1=null;
+function showColour(){const L=D&&D.latest,c=D1&&D1.ok?D1:null,R=L&&L.rgb;
+ const hex=c?c.hex:R?R.hex:null;
+ $('bar').style.background=hex||'repeating-linear-gradient(45deg,#888 0 8px,#aaa 8px 16px)';
+ $('hex').textContent=hex||'no colour';
+ $('cinfo').textContent=c?'D1 live: reading #'+c.seq+', '+c.age_s+' s ago'+(c.saturated?', SATURATED':'')+', i2c errors '+c.i2c_errors:
+  R?(D1&&D1.error?D1.error+'. ':'')+'Last reading '+Math.round(L.age_min)+' min ago, raw sensor colour (no white balance)':'no reading yet';
+ const v=c&&c.index_pct!=null?c.index_pct:L&&L.co2_index_pct!=null?L.co2_index_pct:L?L.hue_pct:null;
+ const p=Math.max(0,Math.min(100,v==null?0:v)),e=$('idxv');
+ e.textContent=v==null?'-':(+v).toFixed(c&&c.index_pct!=null?1:0)+' %';e.style.left=p+'%';
+ e.style.transform='translateX('+(p<8?'0':p>92?'-100%':'-50%')+')';$('idxm').style.left=p+'%';
+ $('idxwarn').textContent=v!=null&&(v<0||v>100)?'outside the range':''}
+async function loadD1(){try{D1=await (await fetch('api/d1colour')).json()}catch(e){D1={ok:false,error:'status page not reachable'}}showColour()}
 load();loadD1();setInterval(load,60000);setInterval(loadD1,30000);addEventListener('resize',()=>D&&draw());
 </script></body></html>
