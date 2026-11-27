@@ -63,11 +63,11 @@ static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // "Set to max" hold
 static const uint8_t DARK_DEFAULT_HALF = 16;  // 8 h
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default = the schedule saved on the D1 on 2026-11-27 00:45 (6 h at 100 %
-// 11:00-17:00; 06:45 4 %, 09:25 23 %, 10:35 43 %; 17:15 40 %, 18:50 33 %, off 20:00).
+// Default = the schedule saved on the D1 on 2026-11-27 17:02 (6 h at 100 %
+// 11:00-17:00; from 0 % at 06:50, off at 20:00).
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {405, 4, 1},    {565, 23, 0},  {635, 43, 0},  {660, 100, 0},
-    {1020, 100, 0}, {1035, 40, 0}, {1130, 33, 0}, {1200, 0, 2}};  // 0 % holds until 06:45 (step), so no overnight glow
+    {410, 0, 1},    {565, 23, 0},  {635, 43, 0},  {660, 100, 0},
+    {1020, 100, 0}, {1085, 40, 0}, {1165, 31, 0}, {1200, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;

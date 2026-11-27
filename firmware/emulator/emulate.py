@@ -46,8 +46,8 @@ OVERRIDE_S = 3600
 # Preview: 100 % from 11:00 to 18:00 (7 h full light, CO2 from 09:00), down to
 # 30 % by 19:00, hold 30 % until 20:30, then fade to 0 % by 21:30.
 # The firmware default still peaks at 10:00.
-SCHED_DEFAULT = [[405, 4, 1], [565, 23, 0], [635, 43, 0], [660, 100, 0],
-                 [1020, 100, 0], [1035, 40, 0], [1130, 33, 0], [1200, 0, 2]]
+SCHED_DEFAULT = [[410, 0, 1], [565, 23, 0], [635, 43, 0], [660, 100, 0],
+                 [1020, 100, 0], [1085, 40, 0], [1165, 31, 0], [1200, 0, 1]]
 ATIME, GAIN = 0xC0, 4
 MAX_COUNT = min((256 - ATIME) * 1024, 65535)
 
