@@ -84,6 +84,9 @@ web:
   # (what the score CronJob below would do, without starting a pod each time).
   # 0 = off. Keep jobs.score disabled while this is on.
   scoreEverySeconds: 300
+  # The D1's own web page; the status page shows its live (white-balanced)
+  # colour swatch next to the raw sensor colour. "" = raw colour only.
+  d1Url: http://aqua.fritz.box
   service:
     type: NodePort       # or ClusterIP behind your own ingress
     nodePort: 30880

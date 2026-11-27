@@ -37,7 +37,8 @@ spec:
           # page never restarts the pod under an open exec session.
           args: ["serve", "--db", "$(DB)", "--vm", "$(VM_URL)", "--source", "$(VM_SOURCE)",
                  "--port", "{{ .Values.web.port }}", "--cache-seconds", "{{ .Values.web.cacheSeconds }}",
-                 "--score-every", "{{ .Values.web.scoreEverySeconds }}"]
+                 "--score-every", "{{ .Values.web.scoreEverySeconds }}"
+                 {{- with .Values.web.d1Url }}, "--d1-url", {{ . | quote }}{{ end }}]
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}

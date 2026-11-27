@@ -214,7 +214,8 @@ def _cmd_mark(a):
 def _cmd_serve(a):
     from .web import serve
     serve(a.host, a.port, a.db, vm_url=a.vm, source=a.source, csv=a.csv,
-          cache_s=a.cache_seconds, history_days=a.days, score_every_s=a.score_every)
+          cache_s=a.cache_seconds, history_days=a.days, score_every_s=a.score_every,
+          d1_url=a.d1_url)
 
 
 # Scheduled commands whose runs are recorded in job_runs (shown on the status page).
@@ -337,6 +338,9 @@ def main(argv=None):
     s.add_argument("--score-every", type=float, default=0, metavar="SECONDS",
                    help="also run detection every N seconds and log alerts, like the "
                         "score CronJob (0 = off); the page then reuses that result")
+    s.add_argument("--d1-url", default=None, metavar="URL",
+                   help="the D1's web address (e.g. http://aqua.fritz.box); the page then "
+                        "also shows the D1's own live colour swatch")
     s.set_defaults(func=_cmd_serve)
 
     a = p.parse_args(argv)
