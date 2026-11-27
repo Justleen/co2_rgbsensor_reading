@@ -44,13 +44,14 @@ tr.sub td{border-bottom:1px solid var(--color-border-subtle);padding-top:0}tr.ma
 .grad{position:relative;height:16px;border-radius:8px;margin:var(--space-2xs) 0 6px;background:linear-gradient(90deg,#2f6fd6,#2bb3a0,#3cb043,#c8d630,#e8d020)}
 .grad i{position:absolute;top:-3px;left:0;width:4px;height:22px;margin-left:-2px;background:var(--fg);border-radius:2px}
 .ends{justify-content:space-between;font-size:var(--font-size-xs)}
+.tsub{font-size:var(--font-size-xs);font-weight:400;color:var(--color-text-secondary);margin-left:var(--space-xs)}
 .leg{display:flex;gap:var(--space-sm);flex-wrap:wrap;font-size:var(--font-size-xs);color:var(--color-text-secondary);margin:var(--space-xs) 0}
 .leg i{display:inline-block;width:14px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 </style></head><body><main>
 <h1>Aquarium CO<sub>2</sub> Machine Learning <small id="upd">loading…</small></h1>
 <div id="errs"></div>
 
-<section class="card"><div class="card__header"><h2 class="card__title">Drop checker colour</h2></div>
+<section class="card"><div class="card__header"><h2 class="card__title">Measured now <span class="tsub">sensor · current value</span></h2></div>
 <div class="row"><span class="big" id="hex">-</span><span id="bar"></span></div>
 <small id="cinfo">loading…</small>
 <div class="idx"><div class="row"><b>CO2 index</b><small id="idxwarn" class="warn"></small></div>
@@ -59,7 +60,7 @@ tr.sub td{border-bottom:1px solid var(--color-border-subtle);padding-top:0}tr.ma
 <div class="row mut ends"><span>0%</span><span>50%</span><span>100%</span></div></div>
 </section>
 
-<section class="card"><div class="card__header"><h2 class="card__title">Now</h2></div>
+<section class="card"><div class="card__header"><h2 class="card__title">Interpreted <span class="tsub">model · derived from the readings</span></h2></div>
 <div class="row"><span class="sw" id="sw"></span><span class="big" id="co2">-</span><span id="state"></span></div>
 <small id="co2sub"></small>
 <div class="kv">
@@ -192,7 +193,7 @@ function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext(
  x.globalAlpha=.55;x.fill();x.globalAlpha=1;x.fillStyle=mut;x.fillText('score',0,sTop+sh/2+3);x.fillText('1.0',R-16,SY(S.threshold)-2)}
 async function load(){try{const r=await fetch('api/status');if(!r.ok)throw new Error('HTTP '+r.status);D=await r.json();render()}
  catch(e){$('errs').innerHTML='<div class="msg">Status not available: '+esc(e.message)+'</div>'}}
-// Drop checker colour: the top of the D1's own page. Live from the D1 when it
+// Measured now: the top of the D1's own page. Live from the D1 when it
 // answers (white-balanced, its own CO2 index); otherwise the last reading from
 // VictoriaMetrics (raw net RGB, no white balance) and this page's CO2 index.
 let D1=null;
