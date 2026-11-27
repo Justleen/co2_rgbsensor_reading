@@ -43,8 +43,8 @@ static const uint8_t GAIN_REG = 0x01;   // 0=1x 1=4x 2=16x 3=60x
 static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
-static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.7.1"
+static const char *HOSTNAME = "aqua";  // WiFi/DHCP name, mDNS (aqua.local) and OTA
+#define FW_VERSION "0.7.3"
 
 // ---- light ------------------------------------------------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
@@ -58,13 +58,16 @@ static const uint8_t IDX_SMOOTH = 3;  // readings averaged (3 x 5 min)
 static const char *TZ_AMSTERDAM = "CET-1CEST,M3.5.0,M10.5.0/3";
 static const float SAFE_PCT = 30;                       // no valid time
 static const uint32_t OVERRIDE_MS = 60UL * 60UL * 1000UL;  // "Set to max" hold
+// A schedule is only accepted if it has at least this much continuous 0 % per day
+// (wrapping past midnight), so a mistake can't light the tank all night.
+static const uint8_t DARK_DEFAULT_HALF = 16;  // 8 h
 enum Ramp : uint8_t { RAMP_SMOOTH = 0, RAMP_LINEAR = 1, RAMP_STEP = 2 };
 struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
-// Default = the schedule saved on the D1 on 2026-11-27 00:45 (6 h at 100 %
-// 11:00-17:00; 06:45 4 %, 09:25 23 %, 10:35 43 %; 17:15 40 %, 18:50 33 %, off 20:00).
+// Default = the schedule saved on the D1 on 2026-11-27 17:02 (6 h at 100 %
+// 11:00-17:00; from 0 % at 06:50, off at 20:00).
 static const SchedPoint SCHED_DEFAULT[8] = {
-    {405, 4, 1},    {565, 23, 0},  {635, 43, 0},  {660, 100, 0},
-    {1020, 100, 0}, {1035, 40, 0}, {1130, 33, 0}, {1200, 0, 1}};
+    {410, 0, 1},    {565, 23, 0},  {635, 43, 0},  {660, 100, 0},
+    {1020, 100, 0}, {1085, 40, 0}, {1165, 31, 0}, {1200, 0, 1}};
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
@@ -117,12 +120,14 @@ struct Settings {
   uint8_t maxhHalf;  // hours at 100 %, in half hours
   float wb[3];       // white-balance gains r, g, b
   float idxLow, idxHigh;
+  uint8_t darkHalf;  // minimum continuous darkness (0 %), in half hours (appended)
 } cfg;
 
 void settingsDefaults() {
   cfg.version = SETTINGS_VERSION;
   memcpy(cfg.sched, SCHED_DEFAULT, sizeof cfg.sched);
   cfg.maxhHalf = 12;  // 6 h
+  cfg.darkHalf = DARK_DEFAULT_HALF;
   cfg.wb[0] = cfg.wb[1] = cfg.wb[2] = 1;
   cfg.idxLow = IDX_DEFAULT_LOW;
   cfg.idxHigh = IDX_DEFAULT_HIGH;
@@ -291,21 +296,33 @@ bool localNow(struct tm &t) {
 
 float minuteOfDay(const struct tm &t) { return t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f; }
 
-float schedLevelAt(float m) {
+float levelAt(const SchedPoint *p, float m) {
   int i = 7;  // before the first point: still in the segment from the last one
   for (int k = 0; k < 8; k++)
-    if (cfg.sched[k].min <= m) i = k;
+    if (p[k].min <= m) i = k;
   int j = (i + 1) % 8;
-  float span = (float)cfg.sched[j].min - cfg.sched[i].min;
+  float span = (float)p[j].min - p[i].min;
   if (span <= 0) span += 1440;
-  float d = m - cfg.sched[i].min;
+  float d = m - p[i].min;
   if (d < 0) d += 1440;
   float f = d / span;
   if (f > 1) f = 1;
-  float a = cfg.sched[i].level, b = cfg.sched[j].level;
-  if (cfg.sched[i].ramp == RAMP_STEP) return a;
-  if (cfg.sched[i].ramp == RAMP_SMOOTH) f = (1 - cosf(PI * f)) / 2;
+  float a = p[i].level, b = p[j].level;
+  if (p[i].ramp == RAMP_STEP) return a;
+  if (p[i].ramp == RAMP_SMOOTH) f = (1 - cosf(PI * f)) / 2;
   return a + (b - a) * f;
+}
+
+float schedLevelAt(float m) { return levelAt(cfg.sched, m); }
+
+// Longest continuous stretch (minutes, wrapping past midnight) at 0 % output.
+int darkMinutes(const SchedPoint *p) {
+  int best = 0, run = 0;
+  for (int m = 0; m < 2 * 1440; m++) {
+    run = levelAt(p, m % 1440) < 0.05f ? run + 1 : 0;
+    if (run > best) best = run;
+  }
+  return best > 1440 ? 1440 : best;
 }
 
 bool schedValid(const SchedPoint *p) {
@@ -343,14 +360,22 @@ void sendSchedule() {
   }
   b += "],\"maxh\":";
   b += String(cfg.maxhHalf / 2.0f, 1);
+  b += ",\"dark\":";
+  b += String(cfg.darkHalf / 2.0f, 1);
+  b += ",\"dark_now\":";
+  b += String(darkMinutes(cfg.sched) / 60.0f, 1);
   b += "}";
   server.send(200, "application/json", b);
 }
 
 // GET: current schedule. POST args: pts="min,level,ramp;..." (8), maxh=hours,
-// reset=1 (default points), resume=1 (end a "Set to max" hold now).
+// dark=hours (minimum continuous 0 %), reset=1 (default points), resume=1 (end a
+// "Set to max" hold now). pts/dark/reset are refused if the result has less than
+// the minimum dark period.
 void handleSchedule() {
-  if (server.hasArg("reset")) memcpy(cfg.sched, SCHED_DEFAULT, sizeof cfg.sched);
+  SchedPoint cand[8];  // candidate schedule: only applied if it keeps the dark period
+  memcpy(cand, server.hasArg("reset") ? SCHED_DEFAULT : cfg.sched, sizeof cand);
+  uint8_t darkHalf = cfg.darkHalf;
   if (server.hasArg("pts")) {
     SchedPoint p[8];
     String v = server.arg("pts");
@@ -371,8 +396,27 @@ void handleSchedule() {
       server.send(400, "text/plain", "times must increase, levels 0-100, ramp 0-2\n");
       return;
     }
-    memcpy(cfg.sched, p, sizeof cfg.sched);
+    memcpy(cand, p, sizeof cand);
   }
+  if (server.hasArg("dark")) {
+    float h = server.arg("dark").toFloat();
+    if (!(h >= 1 && h <= 16)) {
+      server.send(400, "text/plain", "dark must be 1-16 hours\n");
+      return;
+    }
+    darkHalf = (uint8_t)(h * 2 + 0.5f);
+  }
+  int dm = darkMinutes(cand);
+  if ((server.hasArg("pts") || server.hasArg("dark") || server.hasArg("reset")) &&
+      dm < darkHalf * 30) {
+    char msg[120];
+    snprintf(msg, sizeof msg, "needs at least %.1f h of continuous darkness (0 %%), this schedule has %.1f h\n",
+             darkHalf / 2.0f, dm / 60.0f);
+    server.send(400, "text/plain", msg);
+    return;
+  }
+  memcpy(cfg.sched, cand, sizeof cfg.sched);
+  cfg.darkHalf = darkHalf;
   if (server.hasArg("resume")) overrideActive = false;
   if (server.hasArg("maxh")) {
     float h = server.arg("maxh").toFloat();
@@ -382,7 +426,9 @@ void handleSchedule() {
     }
     cfg.maxhHalf = (uint8_t)(h * 2 + 0.5f);
   }
-  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("maxh")) settingsSave();
+  if (server.hasArg("reset") || server.hasArg("pts") || server.hasArg("maxh") ||
+      server.hasArg("dark"))
+    settingsSave();
   schedTick();
   sendSchedule();
 }
@@ -402,6 +448,7 @@ void settingsLoad() {
             cfg.idxHigh <= 360 && fabsf(cfg.idxLow - cfg.idxHigh) >= 1;
   for (int i = 0; i < 3; i++) ok = ok && cfg.wb[i] > 0.01f && cfg.wb[i] < 100.0f;
   if (!ok) settingsDefaults();  // blank, corrupt or an older layout
+  if (cfg.darkHalf < 2 || cfg.darkHalf > 32) cfg.darkHalf = DARK_DEFAULT_HALF;  // field added later
 }
 
 // POST /dimmer?level=0-100: hold that level for 1 hour ("Set to max" = 100).

@@ -14,7 +14,7 @@ decisions, roadmap and open items.
 
 ## The D1 web page
 
-The D1 mini serves a small page (`http://co2watch.fritz.box/`) with the drop-checker colour, the light dimmer and the light schedule:
+The D1 mini serves a small page (`http://aqua.fritz.box/`) with the drop-checker colour, the light dimmer and the light schedule:
 
 <img src="docs/img/web-ui.png" alt="co2watch web page: drop-checker colour swatch, dimmer, light schedule curve and table" width="320">
 

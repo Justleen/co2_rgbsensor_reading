@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build the co2watch sketch and push it to the D1 over WiFi (ArduinoOTA).
-# Usage: firmware/flash-ota.sh [host]   (default co2watch.fritz.box)
+# Usage: firmware/flash-ota.sh [host]   (default aqua.fritz.box)
 # Needs arduino-cli with the esp8266 core, and OTA_PASS in co2watch/secrets.h.
 set -euo pipefail
-HOST=${1:-co2watch.fritz.box}
+HOST=${1:-aqua.fritz.box}
 DIR=$(cd "$(dirname "$0")" && pwd)
 CLI=${ARDUINO_CLI:-arduino-cli}
 OUT=$(mktemp -d)
