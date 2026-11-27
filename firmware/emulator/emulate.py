@@ -47,7 +47,7 @@ OVERRIDE_S = 3600
 # 30 % by 19:00, hold 30 % until 20:30, then fade to 0 % by 21:30.
 # The firmware default still peaks at 10:00.
 SCHED_DEFAULT = [[405, 4, 1], [565, 23, 0], [635, 43, 0], [660, 100, 0],
-                 [1020, 100, 0], [1035, 40, 0], [1130, 33, 0], [1200, 0, 1]]
+                 [1020, 100, 0], [1035, 40, 0], [1130, 33, 0], [1200, 0, 2]]
 ATIME, GAIN = 0xC0, 4
 MAX_COUNT = min((256 - ATIME) * 1024, 65535)
 

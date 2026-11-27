@@ -64,7 +64,7 @@ struct SchedPoint { uint16_t min; uint8_t level; uint8_t ramp; };
 // 11:00-17:00; 06:45 4 %, 09:25 23 %, 10:35 43 %; 17:15 40 %, 18:50 33 %, off 20:00).
 static const SchedPoint SCHED_DEFAULT[8] = {
     {405, 4, 1},    {565, 23, 0},  {635, 43, 0},  {660, 100, 0},
-    {1020, 100, 0}, {1035, 40, 0}, {1130, 33, 0}, {1200, 0, 1}};
+    {1020, 100, 0}, {1035, 40, 0}, {1130, 33, 0}, {1200, 0, 2}};  // 0 % holds until 06:45 (step), so no overnight glow
 
 // ---- TCS34725 registers ----------------------------------------------------
 static const uint8_t TCS_ADDR = 0x29;
