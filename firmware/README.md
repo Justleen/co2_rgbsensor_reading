@@ -60,7 +60,7 @@ Board `esp8266:esp8266:d1_mini` (ESP8266 core 3.1.x); no extra libraries.
 
 - USB: `arduino-cli compile --upload -b esp8266:esp8266:d1_mini -p /dev/ttyUSB0 firmware/co2watch`
   (your user needs to be in the `dialout` group).
-- Over WiFi: `firmware/flash-ota.sh [host]` (default `co2watch.fritz.box`).
+- Over WiFi: `firmware/flash-ota.sh [host]` (default `aqua.fritz.box`).
   Set `ARDUINO_CLI` if `arduino-cli` is not on `PATH`.
 
 ### Relay preview (emulator only)

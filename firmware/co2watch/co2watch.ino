@@ -43,8 +43,8 @@ static const uint8_t GAIN_REG = 0x01;   // 0=1x 1=4x 2=16x 3=60x
 static const uint8_t GAIN_X[] = {1, 4, 16, 60};
 
 static const uint32_t READ_INTERVAL_MS = 5UL * 60UL * 1000UL;
-static const char *HOSTNAME = "co2watch";
-#define FW_VERSION "0.7.2"
+static const char *HOSTNAME = "aqua";  // WiFi/DHCP name, mDNS (aqua.local) and OTA
+#define FW_VERSION "0.7.3"
 
 // ---- light ------------------------------------------------------------------
 static const uint8_t DIM_PIN = D6;          // GPIO12
