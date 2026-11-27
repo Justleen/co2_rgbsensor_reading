@@ -371,7 +371,9 @@ def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
     """Serve the page. With ``score_every_s`` > 0 a background thread also runs
     the score job every that many seconds (replacing the score CronJob), and the
     page shows that thread's latest result instead of computing its own."""
-    page = resources.files("co2watch").joinpath("static/status.html").read_bytes()
+    static = resources.files("co2watch").joinpath("static")
+    page = static.joinpath("status.html").read_bytes()
+    style = static.joinpath("justleen_style.css").read_bytes()
     load = make_loader(vm_url, source, csv, history_days)
 
     def compute():
@@ -408,6 +410,8 @@ def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
                     self._send(200, cache.get(), "application/json")
                 except Exception as e:
                     self._send(500, json.dumps({"error": str(e)}).encode(), "application/json")
+            elif path == "/justleen_style.css":
+                self._send(200, style, "text/css; charset=utf-8")
             elif path == "/healthz":
                 self._send(200, b"ok", "text/plain")
             else:
