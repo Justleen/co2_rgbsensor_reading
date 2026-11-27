@@ -60,7 +60,9 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,t
 <span class="mut" id="clk"></span></div>
 <canvas id="cv" height="150" style="width:100%;margin-top:8px"></canvas>
 <div id="dragHint" style="display:none"><div class="row" style="margin-top:6px"><label>Hours at 100 %
-<input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label></div></div>
+<input type="number" id="maxh" min="0.5" max="16" step="0.5" value="7" style="width:4.5em"></label>
+<label>Min dark h <input type="number" id="darkh" min="1" max="16" step="0.5" value="8" style="width:4.5em"></label></div>
+<small id="darkinfo" class="mut"></small></div>
 <table id="tb" style="margin-top:6px"><tr><th>#</th><th>time</th><th>level %</th><th>then</th></tr></table>
 <div class="row" style="margin-top:10px"><button class="primary" onclick="saveSch()">Save schedule</button>
 <button onclick="if(confirm('Reset the schedule to the default sunrise/sunset?'))sch('reset=1')">Reset to default</button></div></section>
@@ -112,10 +114,15 @@ function fixSteps(p){let ch=false;p.forEach((q,k)=>{const n=p[(k+1)%8],ok=q[1]==
 function plateauIdx(p){for(let k=0;k<7;k++)if(p[k][1]>=100&&p[k+1][1]>=100)return k;return -1}
 // Schedule graph scale, shared by draw() and the drag handling (graph area 150 px high).
 const GH=150,gX=(w,m)=>m/1440*(w-30)+25,gY=v=>GH-18-v/100*(GH-28);
+// Minimum dark period: the longest continuous stretch at 0 % (wrapping past midnight)
+// must be at least "Min dark h". The board refuses schedules that break it.
+function darkRun(p){let best=0,run=0;for(let m=0;m<2880;m++){run=lvAt(p,m%1440)<0.05?run+1:0;if(run>best)best=run}return Math.min(best,1440)}
+const darkMin=()=>Math.round(Math.max(1,Math.min(16,+$('darkh').value||8))*60);
 function fixTb(){try{fixSteps(readTb())}catch(e){}}
 function initDrag(){dragOn=1;const c=$('cv');c.style.touchAction='none';$('dragHint').style.display='';let drag=-1;
  if(S&&S.maxh)$('maxh').value=S.maxh;
  if(S)fixTb();
+ $('darkh').oninput=()=>draw();
  $('maxh').oninput=()=>{let p;try{p=readTb()}catch(e){return}constrain(p);writeTb(p);schDirty=1;draw()};
  const geo=()=>{const w=c.clientWidth,r=c.getBoundingClientRect();return{r,X:m=>gX(w,m),Y:gY,
   iX:x=>(x-25)/(w-30)*1440,iY:y=>(GH-18-y)/(GH-28)*100}};
@@ -150,14 +157,15 @@ function draw(){const c=$('cv'),w=c.clientWidth,h=GH,H=192,x=c.getContext('2d');
   for(const[nm,col,f,y]of lanes){x.fillStyle='#21262d';x.fillRect(X(0),y,X(1440)-X(0),12);x.fillStyle=col;
    let st=null;for(let m=0;m<=1440;m++){const on=m<1440&&f(m);if(on&&st==null)st=m;if(!on&&st!=null){x.fillRect(X(st),y,X(m)-X(st),12);st=null}}
    x.fillStyle=fg;x.fillText(nm,0,y+10)}}
+ if(dragOn){const d=darkRun(p),ok=d>=darkMin(),e=$('darkinfo');e.textContent='Dark: '+(d/60).toFixed(1)+' h continuous at 0 %'+(ok?'':': less than the minimum, the board will refuse it');e.style.color=ok?'':'var(--color-status-error)'}
  if(nowMin!=null){x.strokeStyle='#f85149';x.lineWidth=1;x.beginPath();x.moveTo(X(nowMin),Y(100));x.lineTo(X(nowMin),188);x.stroke()}}
 function fillTb(){const tb=$('tb');while(tb.rows.length>1)tb.deleteRow(1);
  S.pts.forEach((q,k)=>{const r=tb.insertRow();r.innerHTML='<td>'+(k+1)+'</td><td><input type="text" id="t'+k+'" value="'+hm(q[0])+'" maxlength="5" inputmode="numeric" placeholder="HH:MM" style="width:4.5em"></td><td><input type="number" id="l'+k+'" min="0" max="100" style="width:4em" value="'+q[1]+'"></td><td><select id="r'+k+'">'+RN.map((n,i)=>'<option value="'+i+'"'+(i==q[2]?' selected':'')+'>'+n+'</option>').join('')+'</select></td>'});
- tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)fixTb();draw()};if(S.maxh)$('maxh').value=S.maxh;if(dragOn)fixTb();schDirty=0;draw()}
+ tb.oninput=tb.onchange=()=>{schDirty=1;if(dragOn)fixTb();draw()};if(S.maxh)$('maxh').value=S.maxh;if(S.dark)$('darkh').value=S.dark;if(dragOn)fixTb();schDirty=0;draw()}
 async function loadSch(){S=await (await fetch('/api/schedule')).json();fillTb()}
 async function sch(a){busy=1;const b=btnStart();let ok=false;try{const r=await fetch('/api/schedule?'+a,{method:'POST'});if(!r.ok)bad(await r.text());else{S=await r.json();fillTb();ok=true}}catch(e){bad('No answer from the board')}finally{busy=0;btnEnd(b);if(ok)done(b);load()}}
 function saveSch(){let p;try{p=readTb().sort((a,b)=>a[0]-b[0])}catch(e){bad(e);return}
- let extra='';if(dragOn){if(constrain(p)){writeTb(p);draw()}extra='&maxh='+(maxMin()/60)}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){bad('Two points have the same time');return}
+ let extra='';if(dragOn){if(constrain(p)){writeTb(p);draw()}const d=darkRun(p);if(d<darkMin()){bad('Needs at least '+darkMin()/60+' h of continuous darkness, this schedule has '+(d/60).toFixed(1)+' h');return}extra='&maxh='+(maxMin()/60)+'&dark='+(darkMin()/60)}for(let k=1;k<8;k++)if(p[k][0]<=p[k-1][0]){bad('Two points have the same time');return}
  sch('pts='+encodeURIComponent(p.map(q=>q.join(',')).join(';'))+extra)}
 const RL={co2:'CO2',air:'Air',heat:'Heat',pump:'Pump'},rlBusy={};
 function showRelays(r,src){const sec=$('relays');hasRelays=r?1:0;if(!sec||!r){if(sec)sec.style.display='none';return}sec.style.display='';src=src||{};const box=$('rl');

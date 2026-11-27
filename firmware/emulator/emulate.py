@@ -65,7 +65,8 @@ class Board:
         self.wb = [1.0, 1.0, 1.0]
         self.dim_out = 0.0        # actual output
         self.sched = [p[:] for p in SCHED_DEFAULT]
-        self.maxh = 6.0   # preview: max hours at 100 % (page enforces it)
+        self.maxh = 6.0   # hours at 100 % (page enforces it)
+        self.dark = 8.0   # minimum continuous 0 % per day, hours (as the firmware)
         self.override_until = None
         self.source = "safe"
         self.posts = 0
@@ -255,8 +256,18 @@ class Board:
         return {"ok": True, "value": round(v, 1), "hue": round(h, 1),
                 "low": self.idx_low, "high": self.idx_high}
 
+    def dark_minutes(self, pts):
+        saved, self.sched = self.sched, pts
+        best = run = 0
+        for m in range(2 * 1440):
+            run = run + 1 if self.sched_level(m % 1440) < 0.05 else 0
+            best = max(best, run)
+        self.sched = saved
+        return min(best, 1440)
+
     def schedule(self):
-        return {"pts": self.sched, "maxh": self.maxh}
+        return {"pts": self.sched, "maxh": self.maxh, "dark": self.dark,
+                "dark_now": round(self.dark_minutes(self.sched) / 60, 1)}
 
     def metrics(self):
         self.tick()
@@ -413,14 +424,28 @@ def make_handler(board):
                 board.tick()
                 self.j(board.relays)
             elif u.path == "/api/schedule":
-                if "reset" in q:
-                    board.sched = [p[:] for p in SCHED_DEFAULT]
+                cand = [p[:] for p in (SCHED_DEFAULT if "reset" in q else board.sched)]
+                dark = board.dark
                 if "pts" in q:
                     pts, err = parse_pts(q["pts"])
                     if err:
                         self.send(400, err, "text/plain")
                         return
-                    board.sched = pts
+                    cand = pts
+                if "dark" in q:
+                    try:
+                        dark = float(q["dark"])
+                    except ValueError:
+                        dark = 0
+                    if not 1 <= dark <= 16:
+                        self.send(400, "dark must be 1-16 hours\n", "text/plain")
+                        return
+                dm = board.dark_minutes(cand)
+                if ("pts" in q or "dark" in q or "reset" in q) and dm < dark * 60:
+                    self.send(400, "needs at least %.1f h of continuous darkness (0 %%), "
+                              "this schedule has %.1f h\n" % (dark, dm / 60), "text/plain")
+                    return
+                board.sched, board.dark = cand, dark
                 if "resume" in q:
                     board.override_until = None
                     board.relay_override.clear()
