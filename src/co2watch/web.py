@@ -130,6 +130,41 @@ def _light(df: pd.DataFrame) -> list:
     return [None] * len(df)
 
 
+def _raw_colour(row) -> dict | None:
+    """The measured colour of one reading as a display hex, made the way the D1
+    makes its swatch (net = LEDs on - off, clipped at 0, scaled so the largest
+    channel is 255) but without the D1's white-balance gains, which are not
+    exported. So it is the sensor's own view, a bit off from what the eye sees."""
+    try:
+        net = [float(row.get(c)) for c in ("red", "green", "blue")]
+    except (TypeError, ValueError):
+        return None
+    if any(np.isnan(v) for v in net):
+        return None
+    v = [max(x, 0.0) for x in net]
+    mx = max(v)
+    if mx <= 0:
+        return None
+    rgb = [int(x / mx * 255 + 0.5) for x in v]
+    return {"hex": "#" + "".join(f"{x:02X}" for x in rgb), "net": [round(x) for x in net]}
+
+
+def fetch_d1_colour(d1_url: str, timeout: float = 2.0) -> dict:
+    """The D1's own live swatch from its /api/state (white-balanced, as shown on
+    the aqua page). Never raises: returns {"ok": False, "error": ...} instead."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(d1_url.rstrip("/") + "/api/state", timeout=timeout) as r:
+            st = json.loads(r.read())
+        c = st.get("colour") or {}
+        if not c.get("ok") or not isinstance(c.get("hex"), str):
+            return {"ok": False, "error": "the D1 has no valid colour right now"}
+        return {"ok": True, "hex": c["hex"][:7], "hue": _num(c.get("hue"), 1),
+                "fetched_ms": _ms(pd.Timestamp.now(tz="UTC"))}
+    except Exception as e:
+        return {"ok": False, "error": f"D1 not reachable: {type(e).__name__}"}
+
+
 def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
                  window_h: float = 48, errors: list[str] | None = None,
                  prepared=None) -> dict:
@@ -208,6 +243,7 @@ def build_status(con, raw: pd.DataFrame | None, now: pd.Timestamp,
                 "score": _num(srow.get("score"), 2),
                 "kind": srow.get("kind") if isinstance(srow.get("kind"), str) else None,
                 "normal_hue": _num(srow.get("hue_normal"), 1),
+                "rgb": _raw_colour(row),
             }
             if fit is not None and hue is not None:
                 est = fit.co2_estimate(hue)
@@ -367,7 +403,8 @@ def _score_loop(db_path: str, load, every_s: float, cache: _Cache) -> None:
 
 def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
           source: str | None = None, csv: str | None = None, cache_s: float = 120,
-          history_days: float = 16, score_every_s: float = 0) -> None:
+          history_days: float = 16, score_every_s: float = 0,
+          d1_url: str | None = None) -> None:
     """Serve the page. With ``score_every_s`` > 0 a background thread also runs
     the score job every that many seconds (replacing the score CronJob), and the
     page shows that thread's latest result instead of computing its own."""
@@ -391,6 +428,17 @@ def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
         threading.Thread(target=_score_loop, args=(db_path, load, score_every_s, cache),
                          daemon=True, name="score-loop").start()
 
+    d1_lock, d1_cache = threading.Lock(), {"at": -1e9, "body": b""}
+
+    def d1_colour() -> bytes:
+        if not d1_url:
+            return json.dumps({"ok": False, "error": "no D1 address configured"}).encode()
+        with d1_lock:  # at most one D1 request per 20 s, however many viewers
+            if time.monotonic() - d1_cache["at"] > 20:
+                d1_cache["body"] = json.dumps(fetch_d1_colour(d1_url)).encode()
+                d1_cache["at"] = time.monotonic()
+            return d1_cache["body"]
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body: bytes, ctype: str):
             self.send_response(code)
@@ -410,6 +458,8 @@ def serve(host: str, port: int, db_path: str, vm_url: str | None = None,
                     self._send(200, cache.get(), "application/json")
                 except Exception as e:
                     self._send(500, json.dumps({"error": str(e)}).encode(), "application/json")
+            elif path == "/api/d1colour":
+                self._send(200, d1_colour(), "application/json")
             elif path == "/justleen_style.css":
                 self._send(200, style, "text/css; charset=utf-8")
             elif path == "/healthz":

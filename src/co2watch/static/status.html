@@ -1,6 +1,6 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>aqua · co2 ml</title>
+<title>Aquarium CO₂ Machine Learning</title>
 <link rel="stylesheet" href="justleen_style.css">
 <style>
 /* Page layer on top of justleen_style.css (the shared design tokens and
@@ -10,9 +10,9 @@
  --light:rgba(210,153,34,.8);--grid:rgba(139,148,158,.22)}
 body{font-size:var(--font-size-sm)}
 main{max-width:720px;margin:0 auto;padding:var(--space-md)}
-h1{font-size:var(--font-size-2xl);margin-bottom:var(--space-md);display:flex;align-items:baseline;gap:var(--space-sm)}
-h1 small{font-size:var(--font-size-sm);font-weight:400}
-.h1sub{font-size:var(--font-size-lg);font-weight:500;color:var(--color-accent-cyan)}
+h1{font-size:var(--font-size-2xl);margin-bottom:var(--space-md)}
+h1 sub{font-size:.6em;vertical-align:-.25em;line-height:0}
+h1 small{font-size:var(--font-size-sm);font-weight:400;margin-left:var(--space-sm);white-space:nowrap}
 .card{margin-bottom:var(--space-sm)}
 .card__header{margin-bottom:var(--space-sm);padding-bottom:var(--space-xs)}
 .row{display:flex;gap:var(--space-xs);align-items:center;flex-wrap:wrap}
@@ -37,11 +37,24 @@ tr.sub td{border-bottom:1px solid var(--color-border-subtle);padding-top:0}tr.ma
 @media(max-width:480px){table{font-size:var(--font-size-xs)}td,th{padding:3px 3px}th{letter-spacing:0;text-transform:none}.big{font-size:var(--font-size-2xl)}}
 .al{border-top:1px solid var(--color-border-subtle);padding:var(--space-sm) 0}.al:first-child{border-top:0;padding-top:0}
 .al b{color:var(--color-text-primary)}.al p{margin:var(--space-2xs) 0 0;color:var(--color-text-primary)}
+.cols{display:flex;gap:var(--space-md);flex-wrap:wrap}
+.colr{display:flex;gap:var(--space-sm);align-items:center;min-width:200px;flex:1}
+.colr .sw{width:56px;height:56px}
+.colr div{font-family:var(--font-family-mono);font-size:var(--font-size-sm)}
+.colr small{display:block;font-family:var(--font-family-sans)}
 .leg{display:flex;gap:var(--space-sm);flex-wrap:wrap;font-size:var(--font-size-xs);color:var(--color-text-secondary);margin:var(--space-xs) 0}
 .leg i{display:inline-block;width:14px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 </style></head><body><main>
-<h1>aqua <span class="h1sub">co2 ml</span> <small id="upd">loading…</small></h1>
+<h1>Aquarium CO<sub>2</sub> Machine Learning <small id="upd">loading…</small></h1>
 <div id="errs"></div>
+
+<section class="card"><div class="card__header"><h2 class="card__title">Sensor colour now</h2></div>
+<div class="cols">
+<div class="colr"><span class="sw" id="d1sw"></span><div><small>D1 live, white-balanced (as on the aqua page)</small><span id="d1c">-</span></div></div>
+<div class="colr"><span class="sw" id="rawsw"></span><div><small>Last reading, raw net RGB (no white balance)</small><span id="rawc">-</span></div></div>
+</div>
+<small>Measured colours, not the leaflet band swatch below.</small>
+</section>
 
 <section class="card"><div class="card__header"><h2 class="card__title">Now</h2></div>
 <div class="row"><span class="sw" id="sw"></span><span class="big" id="co2">-</span><span id="state"></span></div>
@@ -103,6 +116,8 @@ function render(){
    $('sw').style.background=BC[L.band]||'#888'}
   else{$('co2').textContent=L.hue!=null?L.hue+'°':'-';$('co2sub').textContent='no calibration yet'}
   $('state').innerHTML=scorePill(L.score)+(L.score>=1&&L.kind?' <small>'+esc(KIND[L.kind]||L.kind)+'</small>':'');
+  const C=L.rgb;$('rawsw').style.background=C?C.hex:'transparent';
+  $('rawc').textContent=C?C.hex+' · hue '+L.hue+'° · net '+C.net.join('/'):'no valid reading';
   $('hue').textContent=hp(L.hue);
   $('norm').textContent=L.normal_hue!=null?hp(L.normal_hue):'learning';
   $('score').textContent=L.score!=null?L.score.toFixed(2)+' / 1.00':'-';
@@ -176,5 +191,8 @@ function draw(){const S=D.series,c=$('cv'),w=c.clientWidth,H=230,x=c.getContext(
  x.globalAlpha=.55;x.fill();x.globalAlpha=1;x.fillStyle=mut;x.fillText('score',0,sTop+sh/2+3);x.fillText('1.0',R-16,SY(S.threshold)-2)}
 async function load(){try{const r=await fetch('api/status');if(!r.ok)throw new Error('HTTP '+r.status);D=await r.json();render()}
  catch(e){$('errs').innerHTML='<div class="msg">Status not available: '+esc(e.message)+'</div>'}}
-load();setInterval(load,60000);addEventListener('resize',()=>D&&draw());
+async function loadD1(){let c;try{const r=await fetch('api/d1colour');c=await r.json()}catch(e){c={ok:false,error:'status page not reachable'}}
+ $('d1sw').style.background=c.ok?c.hex:'transparent';
+ $('d1c').textContent=c.ok?c.hex+' · hue '+c.hue+'° · '+hhmm(c.fetched_ms):c.error}
+load();loadD1();setInterval(load,60000);setInterval(loadD1,30000);addEventListener('resize',()=>D&&draw());
 </script></body></html>

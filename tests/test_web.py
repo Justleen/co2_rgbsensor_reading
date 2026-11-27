@@ -126,3 +126,34 @@ def test_index_map_fits_the_d1_index_and_falls_back_to_ends(sim):
     assert m["a"] + m["b"] * 220 < 0        # night above the 0 % end stays negative
     note = _index_note(json.dumps({"hue_now": 125.0, "hue_normal": 190.0}), m)
     assert note == "CO2 index: 50 % vs usual 0 %"
+
+
+def test_raw_colour_and_d1_colour_fetch(tmp_path, sim):
+    import http.server
+
+    from co2watch.web import _raw_colour, fetch_d1_colour
+    c = _raw_colour({"red": 100.0, "green": 400.0, "blue": -5.0})
+    assert c == {"hex": "#40FF00", "net": [100, 400, -5]}
+    assert _raw_colour({"red": float("nan"), "green": 1.0, "blue": 1.0}) is None
+    assert _raw_colour({"red": 0.0, "green": -1.0, "blue": 0.0}) is None
+    con = db.connect(tmp_path / "t.sqlite")
+    st = build_status(con, sim.readings, sim.readings.index[-1] + pd.Timedelta(minutes=5))
+    assert st["latest"]["rgb"]["hex"].startswith("#")
+
+    body = json.dumps({"colour": {"ok": True, "hex": "#2BB3A0", "hue": 171.04}}).encode()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.handle_request, daemon=True).start()
+    got = fetch_d1_colour(f"http://127.0.0.1:{srv.server_address[1]}/")
+    assert got["ok"] and got["hex"] == "#2BB3A0" and got["hue"] == 171.0
+    srv.server_close()
+    bad = fetch_d1_colour(f"http://127.0.0.1:{srv.server_address[1]}", timeout=0.5)
+    assert not bad["ok"] and "not reachable" in bad["error"]
