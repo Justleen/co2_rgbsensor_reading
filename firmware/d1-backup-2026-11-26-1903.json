@@ -1,0 +1,3 @@
+{"schedule":
+{"en":true,"pts":[[420,4,1],[540,18,0],[590,40,0],[660,100,0],[1080,100,0],[1110,40,0],[1195,25,0],[1290,0,1]],"maxh":7.0},"state":
+{"version":"0.6.2","drag":true,"seq":31,"age":5,"saturated":false,"i2c_errors":63,"off":[0,0,0,0],"on":[0,0,0,0],"colour":{"ok":false,"net":[0,0,0],"rgb":[0,0,0],"hex":"#000000","hue":0.0},"wb":[1.0000,1.0000,1.0000],"dim":{"level":35.0,"min":0,"max":100,"source":"schedule","override_left":0},"time_valid":true,"time":"19:03:13","minute":1143.22,"co2idx":{"ok":true,"value":99.5,"hue":153.7,"n":3,"low":203.0,"high":153.5}}}

@@ -1,0 +1,3 @@
+{"schedule":
+{"en":true,"pts":[[420,4,1],[480,15,0],[510,40,0],[660,100,0],[1080,100,0],[1110,40,0],[1195,25,0],[1290,0,1]],"maxh":7.0},"state":
+{"version":"0.6.1","drag":true,"seq":5,"age":154,"saturated":false,"i2c_errors":0,"off":[281,346,230,959],"on":[2062,3151,2596,8521],"colour":{"ok":true,"net":[1781,2805,2366],"rgb":[162,255,215],"hex":"#A2FFD7","hue":154.3},"wb":[1.0000,1.0000,1.0000],"dim":{"level":100.0,"min":0,"max":100,"source":"schedule","override_left":0},"time_valid":true,"time":"16:32:30","minute":992.50,"co2idx":{"ok":true,"value":98.4,"hue":154.3,"n":3,"low":203.0,"high":153.5}}}
